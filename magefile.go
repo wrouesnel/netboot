@@ -1198,10 +1198,22 @@ func getCurrentPlatform() *Platform {
 }
 
 // Binary build a binary for the current platform.
+//
+// Each binary is symlinked into the repository root. If MAGE_BINARY_EXTRA_OUTPUTS
+// is set, the binaries are also copied to the comma separated locations it lists,
+// replacing existing files. Entries are "cmd=path", a directory (every binary is
+// copied into it), or a path whose file name is a command name, optionally with
+// the "-bin" suffix.
 func Binary() error {
 	curPlatform := getCurrentPlatform()
 	if curPlatform == nil {
 		return errPlatformNotSupported
+	}
+
+	// Check the extra outputs before building, so mistakes fail fast.
+	outputs, err := extraOutputs(os.Getenv(binaryExtraOutputsEnv))
+	if err != nil {
+		return err
 	}
 
 	if err := ReleaseBin(curPlatform.String()); err != nil {
@@ -1225,7 +1237,108 @@ func Binary() error {
 		})
 	}
 
-	return waitResults(buildResults)()
+	if err := waitResults(buildResults)(); err != nil {
+		return err
+	}
+
+	return copyExtraOutputs(curPlatform, outputs)
+}
+
+// binaryExtraOutputsEnv names the environment variable listing extra
+// locations Binary copies the built binaries to.
+const binaryExtraOutputsEnv = "MAGE_BINARY_EXTRA_OUTPUTS"
+
+// extraOutputs parses binaryExtraOutputsEnv into a map of destination path
+// to command name. The variable is a comma separated list of entries, each
+// of which is one of:
+//
+//   - cmd=path: copy cmd to path.
+//   - path, where path is an existing directory: copy every command into
+//     the directory under its own name.
+//   - path: copy the command named by the file name of path, optionally
+//     with binLinkSuffix (so .../pixiecore-bin gets pixiecore). If only one
+//     command is built, it is always used.
+func extraOutputs(value string) (map[string]string, error) {
+	outputs := map[string]string{}
+	for _, entry := range strings.Split(value, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+
+		if cmd, dest, ok := strings.Cut(entry, "="); ok {
+			if !lo.Contains(goCmds, cmd) {
+				return nil, fmt.Errorf("%s: %q: unknown command %q (commands: %s)",
+					binaryExtraOutputsEnv, entry, cmd, strings.Join(goCmds, ", "))
+			}
+			outputs[dest] = cmd
+			continue
+		}
+
+		if finfo, err := os.Stat(entry); err == nil && finfo.IsDir() {
+			for _, cmd := range goCmds {
+				outputs[filepath.Join(entry, cmd)] = cmd
+			}
+			continue
+		}
+
+		name := strings.TrimSuffix(filepath.Base(entry), binLinkSuffix)
+		switch {
+		case lo.Contains(goCmds, name):
+			outputs[entry] = name
+		case len(goCmds) == 1:
+			outputs[entry] = goCmds[0]
+		default:
+			return nil, fmt.Errorf("%s: %q: can't tell which command to copy, use cmd=path (commands: %s)",
+				binaryExtraOutputsEnv, entry, strings.Join(goCmds, ", "))
+		}
+	}
+	return outputs, nil
+}
+
+// copyExtraOutputs copies the binaries built for platform to the locations
+// from extraOutputs, replacing any existing files.
+func copyExtraOutputs(platform *Platform, outputs map[string]string) error {
+	dests := lo.Keys(outputs)
+	sort.Strings(dests)
+	for _, dest := range dests {
+		cmd := outputs[dest]
+		fmt.Println("Copying", cmd, "to", dest)
+		if err := replaceFile(platform.PlatformBin(cmd), dest); err != nil {
+			return fmt.Errorf("copying %s to %s: %w", cmd, dest, err)
+		}
+	}
+	return nil
+}
+
+// replaceFile copies src to dest via a temporary file in dest's directory,
+// then renames it into place. This replaces dest even if it is a running
+// executable, and dest is never left partially written.
+func replaceFile(src, dest string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	tmp, err := os.CreateTemp(filepath.Dir(dest), "."+filepath.Base(dest)+".*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+
+	if _, err := io.Copy(tmp, in); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o755); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), dest)
 }
 
 // doReleaseBin handles the deferred building of an actual release binary.
