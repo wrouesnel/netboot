@@ -95,3 +95,30 @@ func TestAPIClientFromFlags(t *testing.T) {
 		t.Fatalf("got %s %q", resp.Status, body)
 	}
 }
+
+func TestTPMEnabled(t *testing.T) {
+	cases := []struct {
+		args    []string
+		want    bool
+		wantErr bool
+	}{
+		{args: nil, want: false},
+		{args: []string{"--tpm-enabled"}, want: true},
+		{args: []string{"--tpm-enabled", "--tpm-key", "/k", "--tpm-cert", "/c", "--tpm-device", "/d"}, want: true},
+		{args: []string{"--tpm-key", "/k"}, wantErr: true},
+		{args: []string{"--tpm-cert", "/c"}, wantErr: true},
+		{args: []string{"--tpm-device", "/d"}, wantErr: true},
+		{args: []string{"--tpm-enabled=false", "--tpm-key", "/k"}, wantErr: true},
+	}
+	for _, tc := range cases {
+		cmd := &cobra.Command{}
+		apiClientFlags(cmd)
+		if err := cmd.ParseFlags(tc.args); err != nil {
+			t.Fatal(err)
+		}
+		got, err := tpmEnabled(cmd)
+		if (err != nil) != tc.wantErr || got != tc.want {
+			t.Errorf("tpmEnabled(%q) = %v, %v; want %v, error=%v", tc.args, got, err, tc.want, tc.wantErr)
+		}
+	}
+}

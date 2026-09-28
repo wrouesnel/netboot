@@ -21,6 +21,9 @@ type APIClientConfig struct {
 	// RootCAs is the set of CAs trusted to sign the API server's
 	// certificate. If nil, the system roots are used.
 	RootCAs *x509.CertPool
+	// InsecureSkipVerify disables verification of server certificates,
+	// so any server can impersonate the API server. For testing only.
+	InsecureSkipVerify bool
 	// ClientCertificate is presented to the API server for mTLS
 	// authentication, if the server asks for one.
 	ClientCertificate *tls.Certificate
@@ -49,8 +52,9 @@ func NewAPIClient(apiURL string, cfg APIClientConfig) (*http.Client, error) {
 	}
 	t := base.Clone()
 	t.TLSClientConfig = &tls.Config{
-		MinVersion: tls.VersionTLS12,
-		RootCAs:    cfg.RootCAs,
+		MinVersion:         tls.VersionTLS12,
+		RootCAs:            cfg.RootCAs,
+		InsecureSkipVerify: cfg.InsecureSkipVerify, //nolint:gosec // Explicitly requested with --api-insecure.
 	}
 	if cfg.ClientCertificate != nil {
 		cert := cfg.ClientCertificate

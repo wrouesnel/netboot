@@ -136,6 +136,10 @@ func TestAPIBooterTLS(t *testing.T) {
 			wantErr: "certificate",
 		},
 		{
+			name: "untrusted server with InsecureSkipVerify",
+			cfg:  APIClientConfig{InsecureSkipVerify: true, ClientCertificate: clientCert, Username: "user", Password: "secret"},
+		},
+		{
 			name:    "no client certificate",
 			cfg:     APIClientConfig{RootCAs: roots, Username: "user", Password: "secret"},
 			wantErr: "certificate",

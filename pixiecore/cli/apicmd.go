@@ -37,7 +37,7 @@ HTTPS API servers can be authenticated with --api-ca-cert, and
 Pixiecore can authenticate itself to the API server with HTTP basic
 auth (--api-username), a client certificate (--api-client-cert), or a
 client certificate whose key is held in the system TPM
-(--api-client-tpm, see "pixiecore tpm-cert").`,
+(--tpm-enabled, see "pixiecore tpm-cert").`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) != 1 {
 			fatalf("you must specify an API URL")

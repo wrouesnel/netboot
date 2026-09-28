@@ -180,50 +180,57 @@ authenticate itself. The same flags work for `pixiecore api` and
 
 - `--api-ca-cert ca.pem`: trust the CA certificates in `ca.pem` for the
   API server's certificate, instead of the system roots.
+- `--api-insecure` turns off verification of the API server's TLS
+  certificate. Anyone on the network path can then impersonate the API
+  server and capture basic auth credentials, so only use it for testing.
 - `--api-username user` and `--api-password-file password.txt` send
   HTTP basic auth credentials. The password can also be given in the
   `PIXIECORE_API_PASSWORD` environment variable.
 - `--api-client-cert cert.pem` and `--api-client-key key.pem` present a
   client certificate for mTLS.
-- `--api-client-tpm` presents a client certificate whose private key is
+- `--tpm-enabled` presents a client certificate whose private key is
   held in the system TPM (see below).
 
 Basic auth credentials are only sent to
 the API server itself, meaning URLs with the same scheme, host and port
 as the API URL. Kernel, initrd and other files that the API points at
 on the API server are fetched with the same credentials, and files on
-other servers are fetched without them. The TLS settings (trusted CAs
-and client certificate) apply to every server Pixiecore fetches from
-in API mode.
+other servers are fetched without them. The TLS settings (trusted CAs,
+`--api-insecure` and the client certificate) apply to every server
+Pixiecore fetches from in API mode.
 
 Pixiecore prints a warning if credentials are used with a plain `http://`
 API URL.
 
 ### TPM-backed client certificates
 
-With `--api-client-tpm`, Pixiecore uses a key generated inside the
+TPM support is off by default. Pixiecore only reads, creates or uses
+the TPM key and certificate when `--tpm-enabled` is given, and the
+other `--tpm-*` flags are rejected without it.
+
+With `--tpm-enabled`, Pixiecore uses a key generated inside the
 system TPM (`/dev/tpmrm0` by default, see `--tpm-device`), so the
 private key can't be copied off the machine. The key is saved as a TSS2
 keyfile in `--tpm-key` (default `/var/lib/pixiecore/tpm-client.key`),
 which is only usable with the TPM that created it. The certificate is
 saved in `--tpm-cert` (default `/var/lib/pixiecore/tpm-client.crt`).
 
-`pixiecore tpm-cert` creates the key and a self-signed certificate if
-they don't exist, and prints the certificate. Configure the API server
-to trust that certificate:
+`pixiecore tpm-cert --tpm-enabled` creates the key and a self-signed
+certificate if they don't exist, and prints the certificate. Configure
+the API server to trust that certificate:
 
 ```shell
-sudo pixiecore tpm-cert --common-name pxe01 > pxe01.crt
+sudo pixiecore tpm-cert --tpm-enabled --common-name pxe01 > pxe01.crt
 # e.g. for nginx: ssl_client_certificate pxe01.crt; ssl_verify_client on;
-sudo pixiecore api https://foo.example/pixiecore --api-client-tpm
+sudo pixiecore api https://foo.example/pixiecore --tpm-enabled
 ```
 
 Running `pixiecore tpm-cert` again prints the same certificate.
 `--renew` issues a new self-signed certificate for the same key, which
 has to be trusted again. To use a CA instead, print a certificate
-signing request with `pixiecore tpm-cert --csr`, and save the signed
-certificate to `--tpm-cert`. Pixiecore uses whatever certificate is in
-`--tpm-cert` as long as it matches the key.
+signing request with `pixiecore tpm-cert --tpm-enabled --csr`, and save
+the signed certificate to `--tpm-cert`. Pixiecore uses whatever
+certificate is in `--tpm-cert` as long as it matches the key.
 
 If the TPM owner hierarchy has a password, set it in the
 `PIXIECORE_TPM_OWNER_PASSWORD` environment variable.

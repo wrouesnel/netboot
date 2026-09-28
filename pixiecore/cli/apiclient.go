@@ -28,16 +28,17 @@ const (
 func apiClientFlags(cmd *cobra.Command) {
 	cmd.Flags().Duration("api-request-timeout", 5*time.Second, "Timeout for request to the API server")
 	cmd.Flags().String("api-ca-cert", "", "PEM file of CA certificates to trust for the API server's certificate (default: system roots)")
+	cmd.Flags().Bool("api-insecure", false, "Don't verify the TLS certificates of HTTPS API servers. Insecure, for testing only")
 	cmd.Flags().String("api-client-cert", "", "PEM certificate to present to the API server for mTLS")
 	cmd.Flags().String("api-client-key", "", "PEM private key for --api-client-cert")
-	cmd.Flags().Bool("api-client-tpm", false, "Authenticate to the API server with mTLS using a TPM-resident key (see the tpm-cert command)")
 	cmd.Flags().String("api-username", "", "Username for HTTP basic auth to the API server")
 	cmd.Flags().String("api-password-file", "", "File containing the password for HTTP basic auth to the API server (or set "+envAPIPassword+")")
 	tpmFlags(cmd)
 }
 
-// tpmFlags adds the flags that locate the TPM client key.
+// tpmFlags adds the flags that enable and locate the TPM client key.
 func tpmFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("tpm-enabled", false, "Use the TPM-resident client key and certificate. Nothing is read from or created in the TPM without this")
 	cmd.Flags().String("tpm-device", tpmkey.DefaultDevice, "TPM device, or unix socket of a TPM simulator")
 	cmd.Flags().String("tpm-key", defaultTPMKey, "TSS2 keyfile for the TPM client key, created if it doesn't exist")
 	cmd.Flags().String("tpm-cert", defaultTPMCert, "Certificate for the TPM client key, created (self-signed) if it doesn't exist")
@@ -53,15 +54,21 @@ func apiClientFromFlags(cmd *cobra.Command, apiURL string) *http.Client {
 		fatalf("Error reading flag: %s", err)
 	}
 	caCert := mustGetString(cmd, "api-ca-cert")
+	if cfg.InsecureSkipVerify, err = cmd.Flags().GetBool("api-insecure"); err != nil {
+		fatalf("Error reading flag: %s", err)
+	}
 	clientCert := mustGetString(cmd, "api-client-cert")
 	clientKey := mustGetString(cmd, "api-client-key")
-	useTPM, err := cmd.Flags().GetBool("api-client-tpm")
+	useTPM, err := tpmEnabled(cmd)
 	if err != nil {
-		fatalf("Error reading flag: %s", err)
+		fatalf("%s", err)
 	}
 	cfg.Username = mustGetString(cmd, "api-username")
 	passwordFile := mustGetString(cmd, "api-password-file")
 
+	if cfg.InsecureSkipVerify && caCert != "" {
+		fatalf("--api-insecure can't be used with --api-ca-cert")
+	}
 	if caCert != "" {
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(mustFile(caCert)) {
@@ -72,7 +79,7 @@ func apiClientFromFlags(cmd *cobra.Command, apiURL string) *http.Client {
 
 	switch {
 	case useTPM && (clientCert != "" || clientKey != ""):
-		fatalf("--api-client-tpm can't be used with --api-client-cert/--api-client-key")
+		fatalf("--tpm-enabled can't be used with --api-client-cert/--api-client-key")
 	case useTPM:
 		cfg.ClientCertificate = tpmCertificateFromFlags(cmd)
 	case clientCert != "" || clientKey != "":
@@ -98,6 +105,9 @@ func apiClientFromFlags(cmd *cobra.Command, apiURL string) *http.Client {
 
 	if u, err := url.Parse(apiURL); err == nil && u.Scheme == "http" && (cfg.Username != "" || cfg.ClientCertificate != nil) {
 		fmt.Fprintf(os.Stderr, "WARNING: API URL %q is not https, credentials will be sent in the clear\n", apiURL)
+	}
+	if cfg.InsecureSkipVerify {
+		fmt.Fprintf(os.Stderr, "WARNING: --api-insecure is set, API server TLS certificates are not verified\n")
 	}
 
 	client, err := pixiecore.NewAPIClient(apiURL, cfg)
@@ -125,6 +135,27 @@ func tpmCertificateFromFlags(cmd *cobra.Command) *tls.Certificate {
 		fatalf("TPM client certificate %q: %s (run \"pixiecore tpm-cert --renew\" to issue a new one)", certPath, err)
 	}
 	return tlsCert
+}
+
+// tpmOptionFlags are the flags that only make sense with --tpm-enabled.
+var tpmOptionFlags = []string{"tpm-device", "tpm-key", "tpm-cert"}
+
+// tpmEnabled reports whether --tpm-enabled is set. It is an error to
+// set any other TPM flag without it, since that would otherwise be
+// silently ignored.
+func tpmEnabled(cmd *cobra.Command) (bool, error) {
+	enabled, err := cmd.Flags().GetBool("tpm-enabled")
+	if err != nil {
+		return false, fmt.Errorf("error reading flag: %w", err)
+	}
+	if !enabled {
+		for _, name := range tpmOptionFlags {
+			if cmd.Flags().Changed(name) {
+				return false, fmt.Errorf("--%s requires --tpm-enabled", name)
+			}
+		}
+	}
+	return enabled, nil
 }
 
 func mustGetString(cmd *cobra.Command, name string) string {

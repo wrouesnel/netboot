@@ -14,7 +14,8 @@ var tpmCertCmd = &cobra.Command{
 	Use:   "tpm-cert",
 	Short: "Print the certificate for the TPM-backed API client key",
 	Long: `Print the certificate Pixiecore presents to API servers when run with
---api-client-tpm, so that the API server can be configured to trust it.
+--tpm-enabled, so that the API server can be configured to trust it.
+This command also requires --tpm-enabled.
 
 The private key is created inside the system TPM and never leaves it. It
 is stored in --tpm-key as a TSS2 keyfile, which is only usable with this
@@ -80,7 +81,18 @@ the key.`,
 // openTPMKey opens the TPM named by --tpm-device, and loads or creates
 // the key in --tpm-key. The TPM is left open for the life of the
 // process, since the returned signer uses it.
+//
+// It is fatal to call this without --tpm-enabled, so the TPM is never
+// touched unless explicitly asked for.
 func openTPMKey(cmd *cobra.Command) (signer crypto.Signer, keyPath string) {
+	enabled, err := tpmEnabled(cmd)
+	if err != nil {
+		fatalf("%s", err)
+	}
+	if !enabled {
+		fatalf("TPM support is disabled, pass --tpm-enabled to use the TPM client key")
+	}
+
 	device := mustGetString(cmd, "tpm-device")
 	keyPath = mustGetString(cmd, "tpm-key")
 	ownerAuth := []byte(os.Getenv(envTPMOwnerPassword))
