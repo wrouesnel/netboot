@@ -17,7 +17,6 @@ package pcap
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"reflect"
 	"testing"
@@ -69,13 +68,15 @@ func TestFiles(t *testing.T) {
 		res := sprintPackets(pkts)
 
 		expectedFile := fmt.Sprintf("testdata/%s.parsed", fname)
-		expected, err := ioutil.ReadFile(expectedFile)
+		expected, err := os.ReadFile(expectedFile)
 		if err != nil {
 			t.Fatalf("Reading expected file: %s", err)
 		}
 		if res != string(expected) {
 			if os.Getenv("UPDATE_TESTDATA") != "" {
-				ioutil.WriteFile(expectedFile, []byte(res), 0644)
+				if err := os.WriteFile(expectedFile, []byte(res), 0644); err != nil {
+					t.Fatal(err)
+				}
 				t.Errorf("%s.pcap didn't decode to %s.parsed (updated %s.parsed)", fname, fname, fname)
 			} else {
 				t.Fatalf("%s.pcap didn't decode to %s.parsed (rerun with UPDATE_TESTDATA=1 to get diff)", fname, fname)

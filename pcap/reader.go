@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package pcap implements reading and writing the "classic" libpcap format.
-package pcap // import "go.universe.tf/netboot/pcap"
+package pcap // import "github.com/wrouesnel/netboot/pcap"
 
 import (
 	"bufio"
@@ -103,7 +103,7 @@ func NewReader(r io.Reader) (*Reader, error) {
 	}
 
 	if header.Major != 2 || header.Minor != 4 {
-		return nil, fmt.Errorf("Unknown pcap version %d.%d", header.Major, header.Minor)
+		return nil, fmt.Errorf("unknown pcap version %d.%d", header.Major, header.Minor)
 	}
 
 	ret.LinkType = LinkType(header.Type)

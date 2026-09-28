@@ -19,7 +19,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"sort"
 )
@@ -140,10 +139,10 @@ func (o Options) Copy() Options {
 // marshalLimited serializes o into w. If nBytes > 0, as many options
 // as possible are packed into that many bytes, inserting padding as
 // needed, and the remaining unwritten options are returned.
-func (o Options) marshalLimited(w io.Writer, nBytes int, skip52 bool) (Options, error) {
+func (o Options) marshalLimited(w *bytes.Buffer, nBytes int, skip52 bool) (Options, error) {
 	ks := make([]int, 0, len(o))
 	for n := range o {
-		if n <= 0 || n >= 255 {
+		if n == 0 || n == 255 {
 			return nil, fmt.Errorf("invalid DHCP option number %d", n)
 		}
 		ks = append(ks, int(n))

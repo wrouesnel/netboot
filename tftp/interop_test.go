@@ -16,7 +16,6 @@ package tftp
 
 import (
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"net"
 	"os"
@@ -44,7 +43,7 @@ func TestInterop(t *testing.T) {
 		t.Fatalf("Error while looking for atftp: %s", err)
 	}
 
-	f, err := ioutil.TempFile("", "interop_test")
+	f, err := os.CreateTemp("", "interop_test")
 	if err != nil {
 		t.Fatalf("creating temporary file: %s", err)
 	}
@@ -80,7 +79,7 @@ func TestInterop(t *testing.T) {
 		fmt.Fprintf(os.Stderr, "\nUsing server: %#v\n", s)
 		l, port := mkListener(t)
 		defer l.Close()
-		go s.Serve(l)
+		go s.Serve(l) //nolint:errcheck // Stops when the test closes l.
 
 		options := [][]string{
 			{"blksize 8"},
@@ -101,7 +100,7 @@ func TestInterop(t *testing.T) {
 			if err != nil {
 				t.Fatalf("TFTP fetch failed, command output:\n%s\n", string(out))
 			}
-			bs, err := ioutil.ReadFile(f.Name())
+			bs, err := os.ReadFile(f.Name())
 			if err != nil {
 				t.Fatalf("Reading back fetched file: %s", err)
 			}

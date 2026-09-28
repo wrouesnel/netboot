@@ -17,12 +17,11 @@ package dhcp4
 import (
 	"bytes"
 	"errors"
-	"io/ioutil"
 	"os"
 	"reflect"
 	"testing"
 
-	"go.universe.tf/netboot/pcap"
+	"github.com/wrouesnel/netboot/pcap"
 )
 
 func udpFromPcap(fname string) ([][]byte, error) {
@@ -73,14 +72,16 @@ func TestParse(t *testing.T) {
 	}
 
 	expectedFile := "testdata/dhcp.parsed"
-	expected, err := ioutil.ReadFile(expectedFile)
+	expected, err := os.ReadFile(expectedFile)
 	if err != nil {
 		t.Fatalf("Reading expected file: %s", err)
 	}
 
 	if pkts.String() != string(expected) {
 		if os.Getenv("UPDATE_TESTDATA") != "" {
-			ioutil.WriteFile(expectedFile, pkts.Bytes(), 0644)
+			if err := os.WriteFile(expectedFile, pkts.Bytes(), 0644); err != nil {
+				t.Fatal(err)
+			}
 			t.Errorf("dhcp.pcap didn't decode to dhcp.parsed (updated dhcp.parsed)")
 		} else {
 			t.Fatalf("dhcp.pcap didn't decode to dhcp.parsed (rerun with UPDATE_TESTDATA=1 to get diff)")

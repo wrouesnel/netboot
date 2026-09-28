@@ -2,13 +2,14 @@ package pool
 
 import (
 	"fmt"
-	"go.universe.tf/netboot/dhcp6"
 	"hash/fnv"
 	"math/big"
 	"math/rand"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/wrouesnel/netboot/dhcp6"
 )
 
 type associationExpiration struct {
@@ -43,7 +44,7 @@ func (f *fifo) Peek() interface{} {
 	return f.q[0]
 }
 
-// RandomAddressPool that returns a random IP address from a pool of available addresses
+// RandomAddressPool that returns a random IP address from a pool of available addresses.
 type RandomAddressPool struct {
 	poolStartAddress               *big.Int
 	poolSize                       uint64
@@ -56,7 +57,7 @@ type RandomAddressPool struct {
 }
 
 // NewRandomAddressPool creates a new RandomAddressPool using pool start IP address, pool size, and valid lifetime of
-// interface associations
+// interface associations.
 func NewRandomAddressPool(poolStartAddress net.IP, poolSize uint64, validLifetime uint32) *RandomAddressPool {
 	ret := &RandomAddressPool{}
 	ret.validLifetime = validLifetime
@@ -89,7 +90,7 @@ func (p *RandomAddressPool) ReserveAddresses(clientID []byte, interfaceIDs [][]b
 			continue
 		}
 		if uint64(len(p.usedIps)) == p.poolSize {
-			return ret, fmt.Errorf("No more free ip addresses are currently available in the pool")
+			return ret, fmt.Errorf("no more free ip addresses are currently available in the pool")
 		}
 
 		for {
@@ -115,7 +116,7 @@ func (p *RandomAddressPool) ReserveAddresses(clientID []byte, interfaceIDs [][]b
 	return ret, nil
 }
 
-// ReleaseAddresses returns IP addresses associated with ClientID and interfaceIDs back into the address pool
+// ReleaseAddresses returns IP addresses associated with ClientID and interfaceIDs back into the address pool.
 func (p *RandomAddressPool) ReleaseAddresses(clientID []byte, interfaceIDs [][]byte) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
@@ -133,10 +134,7 @@ func (p *RandomAddressPool) ReleaseAddresses(clientID []byte, interfaceIDs [][]b
 // expireIdentityAssociations releases IP addresses in identity associations that reached the end of valid lifetime
 // back into the address pool. Note it should be called from under the RandomAddressPool.lock.
 func (p *RandomAddressPool) expireIdentityAssociations() {
-	for {
-		if p.identityAssociationExpirations.Size() < 1 {
-			break
-		}
+	for p.identityAssociationExpirations.Size() > 0 {
 		expiration := p.identityAssociationExpirations.Peek().(*associationExpiration)
 		if p.timeNow().Before(expiration.expiresAt) {
 			break

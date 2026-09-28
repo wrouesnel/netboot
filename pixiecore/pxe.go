@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"net"
 
-	"go.universe.tf/netboot/dhcp4"
+	"github.com/wrouesnel/netboot/dhcp4"
 	"golang.org/x/net/ipv4"
 )
 
@@ -33,13 +33,13 @@ func (s *Server) servePXE(conn net.PacketConn) error {
 	buf := make([]byte, 1024)
 	l := ipv4.NewPacketConn(conn)
 	if err := l.SetControlMessage(ipv4.FlagInterface, true); err != nil {
-		return fmt.Errorf("Couldn't get interface metadata on PXE port: %s", err)
+		return fmt.Errorf("couldn't get interface metadata on PXE port: %s", err)
 	}
 
 	for {
 		n, msg, addr, err := l.ReadFrom(buf)
 		if err != nil {
-			return fmt.Errorf("Receiving packet: %s", err)
+			return fmt.Errorf("receiving packet: %s", err)
 		}
 
 		pkt, err := dhcp4.Unmarshal(buf[:n])

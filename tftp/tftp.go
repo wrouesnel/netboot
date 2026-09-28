@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package tftp implements a read-only TFTP server.
-package tftp // import "go.universe.tf/netboot/tftp"
+package tftp // import "github.com/wrouesnel/netboot/tftp"
 
 import (
 	"bytes"
@@ -167,7 +167,7 @@ func (s *Server) transfer(addr net.Addr, req *rrq) error {
 
 	file, size, err := s.Handler(req.Filename, addr)
 	if err != nil {
-		conn.Write(tftpError("failed to get file"))
+		_, _ = conn.Write(tftpError("failed to get file")) // Best effort: the transfer has failed.
 		return fmt.Errorf("getting file bytes: %s", err)
 	}
 	defer file.Close()
@@ -219,16 +219,16 @@ func (s *Server) transfer(addr net.Addr, req *rrq) error {
 	for {
 		b.Truncate(2)
 		if err = binary.Write(&b, binary.BigEndian, seq); err != nil {
-			conn.Write(tftpError("internal server error"))
+			_, _ = conn.Write(tftpError("internal server error")) // Best effort: the transfer has failed.
 			return fmt.Errorf("writing seqnum: %s", err)
 		}
 		n, err := io.CopyN(&b, file, req.BlockSize)
 		if err != nil && err != io.EOF {
-			conn.Write(tftpError("internal server error"))
+			_, _ = conn.Write(tftpError("internal server error")) // Best effort: the transfer has failed.
 			return fmt.Errorf("reading bytes for block %d: %s", seq, err)
 		}
 		if err = s.send(conn, b.Bytes(), seq); err != nil {
-			conn.Write(tftpError("timeout"))
+			_, _ = conn.Write(tftpError("timeout")) // Best effort: the transfer has failed.
 			return fmt.Errorf("sending data packet %d: %s", seq, err)
 		}
 		seq++
@@ -255,7 +255,9 @@ Attempt:
 			return err
 		}
 
-		conn.SetReadDeadline(time.Now().Add(timeout))
+		if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+			return err
+		}
 
 		var recv [256]byte
 		for {
@@ -339,7 +341,7 @@ func parseRRQ(bs []byte) (*rrq, error) {
 			return nil, fmt.Errorf("non-integer block size value %q", val)
 		}
 		if size < 8 || size > 65464 {
-			return nil, fmt.Errorf("unsupported block size %q", size)
+			return nil, fmt.Errorf("unsupported block size %d", size)
 		}
 		req.BlockSize = size
 	}

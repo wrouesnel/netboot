@@ -13,16 +13,16 @@
 // limitations under the License.
 
 // Package cli implements the commandline interface for Pixiecore.
-package cli // import "go.universe.tf/netboot/pixiecore/cli"
+package cli // import "github.com/wrouesnel/netboot/pixiecore/cli"
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"go.universe.tf/netboot/pixiecore"
+	"github.com/wrouesnel/netboot/pixiecore"
+	"github.com/wrouesnel/netboot/version"
 )
 
 // Ipxe is the set of ipxe binaries for supported firmwares.
@@ -47,11 +47,12 @@ func CLI() {
 	os.Exit(0)
 }
 
-// This represents the base command when called without any subcommands
+// This represents the base command when called without any subcommands.
 var rootCmd = &cobra.Command{
-	Use:   "pixiecore",
-	Short: "All-in-one network booting",
-	Long:  `Pixiecore is a tool to make network booting easy.`,
+	Use:     "pixiecore",
+	Short:   "All-in-one network booting",
+	Long:    `Pixiecore is a tool to make network booting easy.`,
+	Version: version.Version,
 }
 
 func initConfig() {
@@ -83,11 +84,13 @@ func serverConfigFlags(cmd *cobra.Command) {
 
 	// Development flags, hidden from normal use.
 	cmd.Flags().String("ui-assets-dir", "", "UI assets directory (used for development)")
-	cmd.Flags().MarkHidden("ui-assets-dir")
+	if err := cmd.Flags().MarkHidden("ui-assets-dir"); err != nil {
+		panic(err)
+	}
 }
 
 func mustFile(path string) []byte {
-	bs, err := ioutil.ReadFile(path)
+	bs, err := os.ReadFile(path)
 	if err != nil {
 		fatalf("couldn't read file %q: %s", path, err)
 	}

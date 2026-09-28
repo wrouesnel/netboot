@@ -2,11 +2,12 @@ package dhcp6
 
 import (
 	"fmt"
-	"golang.org/x/net/ipv6"
 	"net"
+
+	"golang.org/x/net/ipv6"
 )
 
-// Conn is dhcpv6-specific socket
+// Conn is dhcpv6-specific socket.
 type Conn struct {
 	conn          *ipv6.PacketConn
 	group         net.IP
@@ -15,7 +16,7 @@ type Conn struct {
 	listenPort    string
 }
 
-// NewConn creates a new Conn bound to specified address and port
+// NewConn creates a new Conn bound to specified address and port.
 func NewConn(addr, port string) (*Conn, error) {
 	ifi, err := InterfaceByAddress(addr)
 	if err != nil {
@@ -47,21 +48,21 @@ func NewConn(addr, port string) (*Conn, error) {
 	}, nil
 }
 
-// Close closes Conn
+// Close closes Conn.
 func (c *Conn) Close() error {
 	return c.conn.Close()
 }
 
-// InterfaceByAddress finds the interface bound to an ip address, or returns an error if none were found
+// InterfaceByAddress finds the interface bound to an ip address, or returns an error if none were found.
 func InterfaceByAddress(ifAddr string) (*net.Interface, error) {
 	allIfis, err := net.Interfaces()
 	if err != nil {
-		return nil, fmt.Errorf("Error getting network interface information: %s", err)
+		return nil, fmt.Errorf("error getting network interface information: %s", err)
 	}
 	for _, ifi := range allIfis {
 		addrs, err := ifi.Addrs()
 		if err != nil {
-			return nil, fmt.Errorf("Error getting network interface address information: %s", err)
+			return nil, fmt.Errorf("error getting network interface address information: %s", err)
 		}
 		for _, addr := range addrs {
 			if addrToIP(addr).String() == ifAddr {
@@ -69,7 +70,7 @@ func InterfaceByAddress(ifAddr string) (*net.Interface, error) {
 			}
 		}
 	}
-	return nil, fmt.Errorf("Couldn't find an interface with address %s", ifAddr)
+	return nil, fmt.Errorf("couldn't find an interface with address %s", ifAddr)
 }
 
 func addrToIP(a net.Addr) net.IP {
@@ -84,7 +85,7 @@ func addrToIP(a net.Addr) net.IP {
 	return ip
 }
 
-// RecvDHCP reads next available dhcp packet from Conn
+// RecvDHCP reads next available dhcp packet from Conn.
 func (c *Conn) RecvDHCP() (*Packet, net.IP, error) {
 	b := make([]byte, 1500)
 	for {
@@ -107,7 +108,7 @@ func (c *Conn) RecvDHCP() (*Packet, net.IP, error) {
 	}
 }
 
-// SendDHCP sends a dhcp packet to the specified ip address using Conn
+// SendDHCP sends a dhcp packet to the specified ip address using Conn.
 func (c *Conn) SendDHCP(dst net.IP, p []byte) error {
 	dstAddr := &net.UDPAddr{
 		IP:   dst,
@@ -115,12 +116,12 @@ func (c *Conn) SendDHCP(dst net.IP, p []byte) error {
 	}
 	_, err := c.conn.WriteTo(p, nil, dstAddr)
 	if err != nil {
-		return fmt.Errorf("Error sending a reply to %s: %s", dst.String(), err)
+		return fmt.Errorf("error sending a reply to %s: %s", dst.String(), err)
 	}
 	return nil
 }
 
-// SourceHardwareAddress returns hardware address of the interface used by Conn
+// SourceHardwareAddress returns hardware address of the interface used by Conn.
 func (c *Conn) SourceHardwareAddress() net.HardwareAddr {
 	return c.ifi.HardwareAddr
 }

@@ -1,7 +1,22 @@
-cmd/pixiecore-apache2/pixiecore-apache2
-cmd/pixiecore/pixiecore
-dhcp4/dhcp4.test
+cmd/pixiecore-apache2/pixiecore-bin
+/pixiecore-apache2
+cmd/pixiecoredhcp4/dhcp4.test
 pcap/pcap.test
 pixiecore/pixiecore.test
 vendor/
-build/
+
+# Build output (see the const block at the top of magefile.go)
+/bin/
+/release/
+/.coverage/
+/.cover.out
+/.junit/
+
+# Build tools installed by mage
+/.bin/
+
+# Symlinks to the current platform's binaries made by `go run mage.go binary`.
+# There is one per directory under cmd/ - add an entry for each new binary.
+# A binary named like an existing directory is linked with a -bin suffix.
+/pixiecore-bin
+/pixiecore-apache2

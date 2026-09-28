@@ -4,12 +4,11 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
-	"go.universe.tf/netboot/dhcp6"
-	"go.universe.tf/netboot/dhcp6/pool"
-	"go.universe.tf/netboot/pixiecore"
+	"github.com/wrouesnel/netboot/dhcp6"
+	"github.com/wrouesnel/netboot/dhcp6/pool"
+	"github.com/wrouesnel/netboot/pixiecore"
 )
 
 // pixiecore ipv6api --listen-addr=2001:db8:f00f:cafe::4  --api-request-url=http://[2001:db8:f00f:cafe::4]:8888
@@ -23,10 +22,6 @@ var ipv6ApiCmd = &cobra.Command{
 			fatalf("Error reading flag: %s", err)
 		}
 		apiURL, err := cmd.Flags().GetString("api-request-url")
-		if err != nil {
-			fatalf("Error reading flag: %s", err)
-		}
-		apiTimeout, err := cmd.Flags().GetDuration("api-request-timeout")
 		if err != nil {
 			fatalf("Error reading flag: %s", err)
 		}
@@ -62,8 +57,10 @@ var ipv6ApiCmd = &cobra.Command{
 				dnsServerAddresses = append(dnsServerAddresses, net.ParseIP(dnsServerAddress))
 			}
 		}
-		s.BootConfig = pixiecore.MakeAPIBootConfiguration(apiURL, apiTimeout, preference,
+		bootConfig := pixiecore.MakeAPIBootConfiguration(apiURL, 0, preference,
 			cmd.Flags().Changed("preference"), dnsServerAddresses)
+		bootConfig.Client = apiClientFromFlags(cmd, apiURL)
+		s.BootConfig = bootConfig
 
 		addressPoolStart, err := cmd.Flags().GetString("address-pool-start")
 		if err != nil {
@@ -87,7 +84,7 @@ var ipv6ApiCmd = &cobra.Command{
 func serverv6APIConfigFlags(cmd *cobra.Command) {
 	cmd.Flags().StringP("listen-addr", "", "", "IPv6 address to listen on")
 	cmd.Flags().StringP("api-request-url", "", "", "Ipv6-specific API server url")
-	cmd.Flags().Duration("api-request-timeout", 5*time.Second, "Timeout for request to the API server")
+	apiClientFlags(cmd)
 	cmd.Flags().Bool("debug", false, "Enable debug-level logging")
 	cmd.Flags().Uint8("preference", 255, "Set dhcp server preference value")
 	cmd.Flags().StringP("address-pool-start", "", "2001:db8:f00f:cafe:ffff::100", "Starting ip of the address pool, e.g. 2001:db8:f00f:cafe:ffff::100")

@@ -6,18 +6,18 @@ import (
 	"net"
 )
 
-// PacketBuilder is used for generating responses to requests received from dhcp clients
+// PacketBuilder is used for generating responses to requests received from dhcp clients.
 type PacketBuilder struct {
 	PreferredLifetime uint32
 	ValidLifetime     uint32
 }
 
-// MakePacketBuilder creates a new PacketBuilder and initializes it with preferred and valid lifetimes
+// MakePacketBuilder creates a new PacketBuilder and initializes it with preferred and valid lifetimes.
 func MakePacketBuilder(preferredLifetime, validLifetime uint32) *PacketBuilder {
 	return &PacketBuilder{PreferredLifetime: preferredLifetime, ValidLifetime: validLifetime}
 }
 
-// BuildResponse generates a response packet for a packet received from a client
+// BuildResponse generates a response packet for a packet received from a client.
 func (b *PacketBuilder) BuildResponse(in *Packet, serverDUID []byte, configuration BootConfiguration, addresses AddressPool) (*Packet, error) {
 	switch in.Type {
 	case MsgSolicit:
@@ -64,7 +64,7 @@ func (b *PacketBuilder) makeMsgAdvertise(transactionID [3]byte, serverDUID, clie
 			MakeIaAddrOption(association.IPAddress, b.PreferredLifetime, b.ValidLifetime)))
 	}
 	retOptions.Add(MakeOption(OptServerID, serverDUID))
-	if 0x10 == clientArchType { // HTTPClient
+	if clientArchType == 0x10 { // HTTPClient
 		retOptions.Add(MakeOption(OptVendorClass, []byte{0, 0, 0, 0, 0, 10, 72, 84, 84, 80, 67, 108, 105, 101, 110, 116})) // HTTPClient
 	}
 	retOptions.Add(MakeOption(OptBootfileURL, bootFileURL))
@@ -91,7 +91,7 @@ func (b *PacketBuilder) makeMsgReply(transactionID [3]byte, serverDUID, clientID
 			MakeStatusOption(2, err.Error())))
 	}
 	retOptions.Add(MakeOption(OptServerID, serverDUID))
-	if 0x10 == clientArchType { // HTTPClient
+	if clientArchType == 0x10 { // HTTPClient
 		retOptions.Add(MakeOption(OptVendorClass, []byte{0, 0, 0, 0, 0, 10, 72, 84, 84, 80, 67, 108, 105, 101, 110, 116})) // HTTPClient
 	}
 	retOptions.Add(MakeOption(OptBootfileURL, bootFileURL))
@@ -107,7 +107,7 @@ func (b *PacketBuilder) makeMsgInformationRequestReply(transactionID [3]byte, se
 	retOptions := make(Options)
 	retOptions.Add(MakeOption(OptClientID, clientID))
 	retOptions.Add(MakeOption(OptServerID, serverDUID))
-	if 0x10 == clientArchType { // HTTPClient
+	if clientArchType == 0x10 { // HTTPClient
 		retOptions.Add(MakeOption(OptVendorClass, []byte{0, 0, 0, 0, 0, 10, 72, 84, 84, 80, 67, 108, 105, 101, 110, 116})) // HTTPClient
 	}
 	retOptions.Add(MakeOption(OptBootfileURL, bootFileURL))
@@ -123,7 +123,7 @@ func (b *PacketBuilder) makeMsgReleaseReply(transactionID [3]byte, serverDUID, c
 
 	retOptions.Add(MakeOption(OptClientID, clientID))
 	retOptions.Add(MakeOption(OptServerID, serverDUID))
-	v := make([]byte, 19, 19)
+	v := make([]byte, 19)
 	copy(v[2:], []byte("Release received."))
 	retOptions.Add(MakeOption(OptStatusCode, v))
 

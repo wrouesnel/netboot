@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// IdentityAssociation associates an ip address with a network interface of a client
+// IdentityAssociation associates an ip address with a network interface of a client.
 type IdentityAssociation struct {
 	IPAddress   net.IP
 	ClientID    []byte
@@ -13,7 +13,7 @@ type IdentityAssociation struct {
 	CreatedAt   time.Time
 }
 
-// AddressPool keeps track of assigned and available ip address in an address pool
+// AddressPool keeps track of assigned and available ip address in an address pool.
 type AddressPool interface {
 	ReserveAddresses(clientID []byte, interfaceIds [][]byte) ([]*IdentityAssociation, error)
 	ReleaseAddresses(clientID []byte, interfaceIds [][]byte)

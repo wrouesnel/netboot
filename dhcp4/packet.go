@@ -19,7 +19,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"sort"
 )
@@ -237,7 +236,7 @@ func (p *Packet) Marshal() ([]byte, error) {
 	return ret.Bytes(), nil
 }
 
-func writeIP(w io.Writer, ip net.IP) {
+func writeIP(w *bytes.Buffer, ip net.IP) {
 	ip = ip.To4()
 	if ip == nil {
 		w.Write([]byte{0, 0, 0, 0})
@@ -332,7 +331,7 @@ func Unmarshal(bs []byte) (*Packet, error) {
 			return nil, fmt.Errorf("BOOTP message type (%d) doesn't match DHCP message type (%s", bs[0], ret.Type)
 		}
 	default:
-		return nil, fmt.Errorf("Unknown DHCP message type %d", ret.Type)
+		return nil, fmt.Errorf("unknown DHCP message type %d", ret.Type)
 	}
 
 	return ret, nil

@@ -16,10 +16,9 @@ package cli
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/spf13/cobra"
-	"go.universe.tf/netboot/pixiecore"
+	"github.com/wrouesnel/netboot/pixiecore"
 )
 
 var apiCmd = &cobra.Command{
@@ -31,18 +30,21 @@ what to do. The API server can tell Pixiecore to ignore the machine,
 or tell it what to boot.
 
 It is your responsibility to implement or run a server that implements
-the Pixiecore boot API. The specification can be found at <TODO>.`,
+the Pixiecore boot API. The specification can be found in
+pixiecore/README.api.md.
+
+HTTPS API servers can be authenticated with --api-ca-cert, and
+Pixiecore can authenticate itself to the API server with HTTP basic
+auth (--api-username), a client certificate (--api-client-cert), or a
+client certificate whose key is held in the system TPM
+(--api-client-tpm, see "pixiecore tpm-cert").`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) != 1 {
 			fatalf("you must specify an API URL")
 		}
 		server := args[0]
-		timeout, err := cmd.Flags().GetDuration("api-request-timeout")
-		if err != nil {
-			fatalf("Error reading flag: %s", err)
-		}
 
-		booter, err := pixiecore.APIBooter(server, timeout)
+		booter, err := pixiecore.APIBooterWithClient(server, apiClientFromFlags(cmd, server))
 		if err != nil {
 			fatalf("Failed to create API booter: %s", err)
 		}
@@ -55,6 +57,5 @@ the Pixiecore boot API. The specification can be found at <TODO>.`,
 func init() {
 	rootCmd.AddCommand(apiCmd)
 	serverConfigFlags(apiCmd)
-	apiCmd.Flags().Duration("api-request-timeout", 5*time.Second, "Timeout for request to the API server")
-	// TODO: SSL cert flags for both client and server auth.
+	apiClientFlags(apiCmd)
 }

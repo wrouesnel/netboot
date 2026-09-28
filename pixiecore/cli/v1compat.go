@@ -17,17 +17,20 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
 	"time"
 
-	"go.universe.tf/netboot/pixiecore"
+	"github.com/wrouesnel/netboot/pixiecore"
 )
 
 func v1compatCLI() bool {
 	fs := flag.NewFlagSet("main", flag.ContinueOnError)
 	fs.Usage = func() {}
+	// Parse errors fall through to the modern CLI, which reports its own.
+	fs.SetOutput(io.Discard)
 
 	portDHCP := fs.Int("port-dhcp", 67, "Port to listen on for DHCP requests")
 	portPXE := fs.Int("port-pxe", 4011, "Port to listen on for PXE requests")

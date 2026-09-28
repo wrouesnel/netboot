@@ -125,14 +125,27 @@ func (s *staticBooter) WriteBootFile(ID, io.Reader) error {
 
 // APIBooter gets a BootSpec from a remote server over HTTP.
 //
-// The API is described in README.api.md
+// The API is described in README.api.md.
 func APIBooter(url string, timeout time.Duration) (Booter, error) {
+	return APIBooterWithClient(url, &http.Client{Timeout: timeout})
+}
+
+// APIBooterWithClient is like APIBooter, but makes requests with
+// client. Use NewAPIClient to make a client that uses TLS client
+// certificates or basic auth.
+//
+// client's Timeout applies to API requests. Boot files are fetched
+// using client's Transport without a timeout, since they can be large.
+func APIBooterWithClient(url string, client *http.Client) (Booter, error) {
 	if !strings.HasSuffix(url, "/") {
 		url += "/"
 	}
+	fileClient := *client
+	fileClient.Timeout = 0
 	ret := &apibooter{
-		client:    &http.Client{Timeout: timeout},
-		urlPrefix: url + "v1",
+		client:     client,
+		fileClient: &fileClient,
+		urlPrefix:  url + "v1",
 	}
 	if _, err := io.ReadFull(rand.Reader, ret.key[:]); err != nil {
 		return nil, fmt.Errorf("failed to get randomness for signing key: %s", err)
@@ -142,9 +155,10 @@ func APIBooter(url string, timeout time.Duration) (Booter, error) {
 }
 
 type apibooter struct {
-	client    *http.Client
-	urlPrefix string
-	key       [32]byte
+	client     *http.Client
+	fileClient *http.Client
+	urlPrefix  string
+	key        [32]byte
 }
 
 func (b *apibooter) getAPIResponse(hw net.HardwareAddr) (io.ReadCloser, error) {
@@ -272,14 +286,15 @@ func (b *apibooter) ReadBootFile(id ID) (io.ReadCloser, int64, error) {
 		}
 		ret, sz = f, fi.Size()
 	} else {
-		// urlStr will get reparsed by http.Get, which is mildly
+		// urlStr will get reparsed by Get, which is mildly
 		// wasteful, but the code looks nicer than constructing a
 		// Request.
-		resp, err := http.Get(urlStr)
+		resp, err := b.fileClient.Get(urlStr)
 		if err != nil {
 			return nil, -1, err
 		}
 		if resp.StatusCode != 200 {
+			resp.Body.Close()
 			return nil, -1, fmt.Errorf("GET %q failed: %s", urlStr, resp.Status)
 		}
 
@@ -297,14 +312,14 @@ func (b *apibooter) WriteBootFile(id ID, body io.Reader) error {
 		return err
 	}
 
-	resp, err := http.Post(u, "application/octet-stream", body)
+	resp, err := b.fileClient.Post(u, "application/octet-stream", body)
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("POST %q failed: %s", u, resp.Status)
 	}
-	defer resp.Body.Close()
 	return nil
 }
 

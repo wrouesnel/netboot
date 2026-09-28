@@ -4,7 +4,7 @@ Pixiecore is an tool to manage network booting of machines. It can be used
 for simple single shot network boots, or as a building block of machine
 management infrastructure.
 
-[![license](https://img.shields.io/github/license/google/netboot.svg)](https://github.com/google/netboot/blob/master/LICENSE) ![api](https://img.shields.io/badge/api-unstable-red.svg) ![cli](https://img.shields.io/badge/cli-stable-green.svg) [![cli](https://img.shields.io/badge/godoc-reference-blue.svg)](https://godoc.org/go.universe.tf/netboot/pixiecore)
+[![license](https://img.shields.io/github/license/wrouesnel/netboot.svg)](https://github.com/wrouesnel/netboot/blob/main/LICENSE) ![api](https://img.shields.io/badge/api-unstable-red.svg) ![cli](https://img.shields.io/badge/cli-stable-green.svg) [![cli](https://img.shields.io/badge/godoc-reference-blue.svg)](https://pkg.go.dev/github.com/wrouesnel/netboot/pixiecore)
 
 ## TL;DR
 
@@ -29,45 +29,29 @@ can read the details in [README.booting](README.booting.md).
 
 ## Installation
 
-Pixiecore is available in a variety of forms. All of them
-automatically track this repository, so you always get the latest
-build.
+These installation methods track this fork. Upstream's Debian packages
+and Docker Hub/Quay images are built from
+[danderson/netboot](https://github.com/danderson/netboot) and do not
+include this fork's changes.
 
-### Go get
+### Go install
 
-Build the latest Pixiecore via `go get`:
-
-```shell
-go get go.universe.tf/netboot/cmd/pixiecore
-```
-
-### Debian/Ubuntu
-
-A Debian/Ubuntu package is available from
-[packagecloud.io](https://packagecloud.io/danderson/pixiecore/install). They
-have extensive configuration instructions for a variety of mechanisms,
-but the quick version is:
+Build the latest Pixiecore via `go install`:
 
 ```shell
-sudo apt-get install -y apt-transport-https
-curl -L https://packagecloud.io/danderson/pixiecore/gpgkey | sudo apt-key add -
-echo "deb https://packagecloud.io/danderson/pixiecore/debian stretch main" | sudo tee /etc/apt/sources.list.d/pixiecore.list
-sudo apt-get update
-sudo apt-get install pixiecore
+go install github.com/wrouesnel/netboot/cmd/pixiecore@latest
 ```
 
-Note that you should reference debian/stretch regardless of your
-actual distro. The pixiecore binary is built statically and should
-work fine on all distros, so we only build one variant of the
-package. Please file a bug if you hit problems with this setup.
+### Release binaries
+
+Statically linked binaries for each tagged version are attached to the
+[GitHub releases](https://github.com/wrouesnel/netboot/releases).
 
 ### Container images
 
-Docker and ACI autobuilds are available. They track the latest code
-from this repository.
-
- - Docker image on Docker Hub: [pixiecore/pixiecore](https://hub.docker.com/r/pixiecore/pixiecore/)
- - Rkt ACI image on Quay.io: [quay.io/pixiecore/pixiecore](https://quay.io/repository/pixiecore/pixiecore)
+Container images for `linux/amd64` and `linux/arm64` are published to
+[ghcr.io/wrouesnel/netboot](https://github.com/wrouesnel/netboot/pkgs/container/netboot)
+from the `main` branch (`latest`) and from version tags.
 
 ## Using Pixiecore in static mode ("I just want to boot a machine")
 
@@ -143,6 +127,11 @@ sudo pixiecore api https://foo.example/pixiecore
 The endpoint you provide must implement the Pixiecore boot API, as
 described in the [API spec](README.api.md).
 
+The API can be served over HTTPS, and Pixiecore can authenticate to it
+with HTTP basic auth, a client certificate, or a client certificate
+whose key is held in the system TPM. See
+[Securing the API](README.api.md#securing-the-api).
+
 You can find a sample API server implementation in the `api-example`
 subdirectory. The code is not production-grade, but gives a short
 illustration of how the protocol works by reimplementing a subset of
@@ -150,25 +139,15 @@ Pixiecore's static mode as an API server.
 
 ## Running in containers
 
-Pixiecore is available both as an ACI image for `rkt`, and as a Docker
-image for Docker Engine. Both images are automatically built whenever
-the github repository changes.
-
 Because Pixiecore needs to listen for DHCP traffic, it has to run with
-access to the host's networking stack. Both Rkt and Docker do this
-with the `--net=host` commandline flag.
+access to the host's networking stack, which Docker provides with the
+`--net=host` commandline flag.
 
 ```shell
-sudo rkt run --net=host \
-  --volume images,kind=host,source=/var/images \
-  --mount volume=images,target=/image \
-  quay.io/pixiecore/pixiecore -- \
-    boot /image/coreos_production_pxe.vmlinuz /image/coreos_production_pxe_image.cpio.gz
-
 sudo docker run \
   --net=host \
   -v .:/image \
-  pixiecore/pixiecore \
+  ghcr.io/wrouesnel/netboot \
     boot /image/coreos_production_pxe.vmlinuz /image/coreos_production_pxe_image.cpio.gz
 ```
 

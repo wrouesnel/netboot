@@ -52,7 +52,9 @@ func testConn(t *testing.T, impl conn, addr string) {
 	}
 
 	go func() {
-		s.Write(bs)
+		if _, err := s.Write(bs); err != nil {
+			t.Error(err)
+		}
 	}()
 	if err = c.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
@@ -82,7 +84,9 @@ func testConn(t *testing.T, impl conn, addr string) {
 
 	ch := make(chan *Packet, 1)
 	go func() {
-		s.SetReadDeadline(time.Now().Add(time.Second))
+		if err := s.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			t.Error(err)
+		}
 		var buf [1500]byte
 		n, err := s.Read(buf[:])
 		if err != nil {

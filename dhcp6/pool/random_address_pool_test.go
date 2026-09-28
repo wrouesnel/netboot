@@ -57,7 +57,9 @@ func TestReserveAddressUpdatesAddressPool(t *testing.T) {
 
 	pool := NewRandomAddressPool(net.ParseIP("2001:db8:f00f:cafe::1"), 1, expectedMaxLifetime)
 	pool.timeNow = func() time.Time { return expectedTime }
-	pool.ReserveAddresses(expectedClientID, [][]byte{expectedIAID})
+	if _, err := pool.ReserveAddresses(expectedClientID, [][]byte{expectedIAID}); err != nil {
+		t.Fatal(err)
+	}
 	expectedIdx := pool.calculateIAIDHash(expectedClientID, expectedIAID)
 
 	a, exists := pool.identityAssociations[expectedIdx]
@@ -78,7 +80,9 @@ func TestReserveAddressKeepsTrackOfUsedAddresses(t *testing.T) {
 
 	pool := NewRandomAddressPool(net.ParseIP("2001:db8:f00f:cafe::1"), 1, expectedMaxLifetime)
 	pool.timeNow = func() time.Time { return expectedTime }
-	pool.ReserveAddresses(expectedClientID, [][]byte{expectedIAID})
+	if _, err := pool.ReserveAddresses(expectedClientID, [][]byte{expectedIAID}); err != nil {
+		t.Fatal(err)
+	}
 
 	_, exists := pool.usedIps[0x01]
 	if !exists {
@@ -94,7 +98,9 @@ func TestReserveAddressKeepsTrackOfAssociationExpiration(t *testing.T) {
 
 	pool := NewRandomAddressPool(net.ParseIP("2001:db8:f00f:cafe::1"), 1, expectedMaxLifetime)
 	pool.timeNow = func() time.Time { return expectedTime }
-	pool.ReserveAddresses(expectedClientID, [][]byte{expectedIAID})
+	if _, err := pool.ReserveAddresses(expectedClientID, [][]byte{expectedIAID}); err != nil {
+		t.Fatal(err)
+	}
 
 	expiration := pool.identityAssociationExpirations.Peek().(*associationExpiration)
 	if expiration == nil {

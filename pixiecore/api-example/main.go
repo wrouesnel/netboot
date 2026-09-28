@@ -36,7 +36,7 @@ var (
 func main() {
 	flag.Parse()
 	http.HandleFunc("/v1/boot/", api)
-	http.ListenAndServe(":"+strconv.Itoa(*port), nil)
+	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(*port), nil))
 }
 
 func api(w http.ResponseWriter, r *http.Request) {

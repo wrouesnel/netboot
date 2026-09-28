@@ -7,72 +7,72 @@ import (
 	"net"
 )
 
-// DHCPv6 option IDs
+// DHCPv6 option IDs.
 const (
-	// Client ID Option
+	// Client ID Option.
 	OptClientID uint16 = 1
-	// Server ID Option
+	// Server ID Option.
 	OptServerID = 2
-	// Identity Association for Non-temporary Addresses Option
+	// Identity Association for Non-temporary Addresses Option.
 	OptIaNa = 3
-	// Identity Association for Temporary Addresses Option
+	// Identity Association for Temporary Addresses Option.
 	OptIaTa = 4
-	// IA Address Option
+	// IA Address Option.
 	OptIaAddr = 5
-	// Option Request Option
+	// Option Request Option.
 	OptOro = 6
-	// Preference Option
+	// Preference Option.
 	OptPreference = 7
-	// Elapsed Time Option
+	// Elapsed Time Option.
 	OptElapsedTime = 8
-	// Relay Message Option
+	// Relay Message Option.
 	OptRelayMessage = 9
-	// Authentication Option
+	// Authentication Option.
 	OptAuth = 11
-	// Server Unicast Option
+	// Server Unicast Option.
 	OptUnicast = 12
-	// Status Code Option
+	// Status Code Option.
 	OptStatusCode = 13
-	// Rapid Commit Option
+	// Rapid Commit Option.
 	OptRapidCommit = 14
-	// User Class Option
+	// User Class Option.
 	OptUserClass = 15
-	// Vendor Class Option
+	// Vendor Class Option.
 	OptVendorClass = 16
-	// Vendor-specific Information Option
+	// Vendor-specific Information Option.
 	OptVendorOpts = 17
-	// Interface-Id Option
+	// Interface-Id Option.
 	OptInterfaceID = 18
-	// Reconfigure Message Option
+	// Reconfigure Message Option.
 	OptReconfMsg = 19
-	// Reconfigure Accept Option
+	// Reconfigure Accept Option.
 	OptReconfAccept = 20
-	// Recursive DNS name servers Option
+	// Recursive DNS name servers Option.
 	OptRecursiveDNS = 23
-	// Boot File URL Option
+	// Boot File URL Option.
 	OptBootfileURL = 59
-	// Boot File Parameters Option
+	// Boot File Parameters Option.
 	OptBootfileParam = 60
-	// Client Architecture Type Option
+	// Client Architecture Type Option.
 	OptClientArchType = 61
 )
 
-// Option represents a DHCPv6 Option
+// Option represents a DHCPv6 Option.
 type Option struct {
 	ID     uint16
 	Length uint16
 	Value  []byte
 }
 
-// MakeOption creates an Option with given ID and value
+// MakeOption creates an Option with given ID and value.
 func MakeOption(id uint16, value []byte) *Option {
 	return &Option{ID: id, Length: uint16(len(value)), Value: value}
 }
 
-// Options contains all options of a DHCPv6 packet
+// Options contains all options of a DHCPv6 packet.
 type Options map[uint16][]*Option
 
-// UnmarshalOptions unmarshals individual Options and returns them in a new Options data structure
+// UnmarshalOptions unmarshals individual Options and returns them in a new Options data structure.
 func UnmarshalOptions(bs []byte) (Options, error) {
 	ret := make(Options)
 	for len(bs) > 0 {
@@ -86,7 +86,7 @@ func UnmarshalOptions(bs []byte) (Options, error) {
 	return ret, nil
 }
 
-// UnmarshalOption de-serializes an Option
+// UnmarshalOption de-serializes an Option.
 func UnmarshalOption(bs []byte) (*Option, error) {
 	optionLength := binary.BigEndian.Uint16(bs[2:4])
 	optionID := binary.BigEndian.Uint16(bs[0:2])
@@ -107,7 +107,7 @@ func UnmarshalOption(bs []byte) (*Option, error) {
 	return &Option{ID: optionID, Length: optionLength, Value: bs[4 : 4+optionLength]}, nil
 }
 
-// HumanReadable presents DHCPv6 options in a human-readable form
+// HumanReadable presents DHCPv6 options in a human-readable form.
 func (o Options) HumanReadable() []string {
 	ret := make([]string, 0, len(o))
 	for _, multipleOptions := range o {
@@ -154,7 +154,7 @@ func (o Options) humanReadableIaNa(opt Option) []string {
 	return ret
 }
 
-// Add adds an option to Options
+// Add adds an option to Options.
 func (o Options) Add(option *Option) {
 	_, present := o[option.ID]
 	if !present {
@@ -165,7 +165,7 @@ func (o Options) Add(option *Option) {
 
 // MakeIaNaOption creates a Identity Association for Non-temporary Addresses Option
 // with specified interface ID, t1 and t2 times, and an interface-specific option
-// (an IA Address Option or a Status Option)
+// (an IA Address Option or a Status Option).
 func MakeIaNaOption(iaid []byte, t1, t2 uint32, iaOption *Option) *Option {
 	serializedIaOption, _ := iaOption.Marshal()
 	value := make([]byte, 12+len(serializedIaOption))
@@ -177,7 +177,7 @@ func MakeIaNaOption(iaid []byte, t1, t2 uint32, iaOption *Option) *Option {
 }
 
 // MakeIaAddrOption creates an IA Address Option using IP address,
-// preferred and valid lifetimes
+// preferred and valid lifetimes.
 func MakeIaAddrOption(addr net.IP, preferredLifetime, validLifetime uint32) *Option {
 	value := make([]byte, 24)
 	copy(value[0:], addr)
@@ -186,7 +186,7 @@ func MakeIaAddrOption(addr net.IP, preferredLifetime, validLifetime uint32) *Opt
 	return MakeOption(OptIaAddr, value)
 }
 
-// MakeStatusOption creates a Status Option with given status code and message
+// MakeStatusOption creates a Status Option with given status code and message.
 func MakeStatusOption(statusCode uint16, message string) *Option {
 	value := make([]byte, 2+len(message))
 	binary.BigEndian.PutUint16(value[0:], statusCode)
@@ -194,7 +194,7 @@ func MakeStatusOption(statusCode uint16, message string) *Option {
 	return MakeOption(OptStatusCode, value)
 }
 
-// MakeDNSServersOption creates a Recursive DNS servers Option with the specified list of IP addresses
+// MakeDNSServersOption creates a Recursive DNS servers Option with the specified list of IP addresses.
 func MakeDNSServersOption(addresses []net.IP) *Option {
 	value := make([]byte, 16*len(addresses))
 	for i, dnsAddress := range addresses {
@@ -203,43 +203,43 @@ func MakeDNSServersOption(addresses []net.IP) *Option {
 	return MakeOption(OptRecursiveDNS, value)
 }
 
-// Marshal serializes Options
+// Marshal serializes Options.
 func (o Options) Marshal() ([]byte, error) {
 	buffer := bytes.NewBuffer(make([]byte, 0, 1446))
 	for _, multipleOptions := range o {
 		for _, o := range multipleOptions {
 			serialized, err := o.Marshal()
 			if err != nil {
-				return nil, fmt.Errorf("Error serializing option value: %s", err)
+				return nil, fmt.Errorf("error serializing option value: %s", err)
 			}
 			if err := binary.Write(buffer, binary.BigEndian, serialized); err != nil {
-				return nil, fmt.Errorf("Error serializing option value: %s", err)
+				return nil, fmt.Errorf("error serializing option value: %s", err)
 			}
 		}
 	}
 	return buffer.Bytes(), nil
 }
 
-// Marshal serializes the Option
+// Marshal serializes the Option.
 func (o *Option) Marshal() ([]byte, error) {
 	buffer := bytes.NewBuffer(make([]byte, 0, o.Length+2))
 
 	err := binary.Write(buffer, binary.BigEndian, o.ID)
 	if err != nil {
-		return nil, fmt.Errorf("Error serializing option id: %s", err)
+		return nil, fmt.Errorf("error serializing option id: %s", err)
 	}
 	err = binary.Write(buffer, binary.BigEndian, o.Length)
 	if err != nil {
-		return nil, fmt.Errorf("Error serializing option length: %s", err)
+		return nil, fmt.Errorf("error serializing option length: %s", err)
 	}
 	err = binary.Write(buffer, binary.BigEndian, o.Value)
 	if err != nil {
-		return nil, fmt.Errorf("Error serializing option value: %s", err)
+		return nil, fmt.Errorf("error serializing option value: %s", err)
 	}
 	return buffer.Bytes(), nil
 }
 
-// UnmarshalOptionRequestOption de-serializes Option Request Option
+// UnmarshalOptionRequestOption de-serializes Option Request Option.
 func (o Options) UnmarshalOptionRequestOption() map[uint16]bool {
 	ret := make(map[uint16]bool)
 
@@ -255,44 +255,44 @@ func (o Options) UnmarshalOptionRequestOption() map[uint16]bool {
 	return ret
 }
 
-// HasBootFileURLOption returns true if Options contains Boot File URL Option
+// HasBootFileURLOption returns true if Options contains Boot File URL Option.
 func (o Options) HasBootFileURLOption() bool {
 	requestedOptions := o.UnmarshalOptionRequestOption()
 	_, present := requestedOptions[OptBootfileURL]
 	return present
 }
 
-// HasClientID returns true if Options contains Client ID Option
+// HasClientID returns true if Options contains Client ID Option.
 func (o Options) HasClientID() bool {
 	_, present := o[OptClientID]
 	return present
 }
 
-// HasServerID returns true if Options contains Server ID Option
+// HasServerID returns true if Options contains Server ID Option.
 func (o Options) HasServerID() bool {
 	_, present := o[OptServerID]
 	return present
 }
 
-// HasIaNa returns true oif Options contains Identity Association for Non-Temporary Addresses Option
+// HasIaNa returns true oif Options contains Identity Association for Non-Temporary Addresses Option.
 func (o Options) HasIaNa() bool {
 	_, present := o[OptIaNa]
 	return present
 }
 
-// HasIaTa returns true if Options contains Identity Association for Temporary Addresses Option
+// HasIaTa returns true if Options contains Identity Association for Temporary Addresses Option.
 func (o Options) HasIaTa() bool {
 	_, present := o[OptIaTa]
 	return present
 }
 
-// HasClientArchType returns true if Options contains Client Architecture Type Option
+// HasClientArchType returns true if Options contains Client Architecture Type Option.
 func (o Options) HasClientArchType() bool {
 	_, present := o[OptClientArchType]
 	return present
 }
 
-// ClientID returns the value in the Client ID Option or nil if the option doesn't exist
+// ClientID returns the value in the Client ID Option or nil if the option doesn't exist.
 func (o Options) ClientID() []byte {
 	opt, exists := o[OptClientID]
 	if exists {
@@ -301,7 +301,7 @@ func (o Options) ClientID() []byte {
 	return nil
 }
 
-// ServerID returns the value in the Server ID Option or nil if the option doesn't exist
+// ServerID returns the value in the Server ID Option or nil if the option doesn't exist.
 func (o Options) ServerID() []byte {
 	opt, exists := o[OptServerID]
 	if exists {
@@ -311,7 +311,7 @@ func (o Options) ServerID() []byte {
 }
 
 // IaNaIDs returns a list of interface IDs in all Identity Association for Non-Temporary Addresses Options,
-// or an empty list if none exist
+// or an empty list if none exist.
 func (o Options) IaNaIDs() [][]byte {
 	options, exists := o[OptIaNa]
 	ret := make([][]byte, 0)
@@ -324,7 +324,7 @@ func (o Options) IaNaIDs() [][]byte {
 	return ret
 }
 
-// ClientArchType returns the value in the Client Architecture Type Option, or 0 if the option doesn't exist
+// ClientArchType returns the value in the Client Architecture Type Option, or 0 if the option doesn't exist.
 func (o Options) ClientArchType() uint16 {
 	opt, exists := o[OptClientArchType]
 	if exists {
@@ -333,7 +333,7 @@ func (o Options) ClientArchType() uint16 {
 	return 0
 }
 
-// BootFileURL returns the value in the Boot File URL Option, or nil if the option doesn't exist
+// BootFileURL returns the value in the Boot File URL Option, or nil if the option doesn't exist.
 func (o Options) BootFileURL() []byte {
 	opt, exists := o[OptBootfileURL]
 	if exists {

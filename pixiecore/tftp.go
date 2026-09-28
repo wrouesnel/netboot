@@ -19,25 +19,21 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"strconv"
 	"strings"
 
-	"go.universe.tf/netboot/tftp"
+	"github.com/wrouesnel/netboot/tftp"
 )
 
 func (s *Server) serveTFTP(l net.PacketConn) error {
 	ts := tftp.Server{
 		Handler:     s.handleTFTP,
-		InfoLog:     func(msg string) { s.debug("TFTP", msg) },
+		InfoLog:     func(msg string) { s.debug("TFTP", "%s", msg) },
 		TransferLog: s.logTFTPTransfer,
 	}
-	err := ts.Serve(l)
-	if err != nil {
-		return fmt.Errorf("TFTP server shut down: %s", err)
-	}
-	return nil
+	// Serve only returns when the server fails.
+	return fmt.Errorf("TFTP server shut down: %s", ts.Serve(l))
 }
 
 func extractInfo(path string) (net.HardwareAddr, int, error) {
@@ -84,5 +80,5 @@ func (s *Server) handleTFTP(path string, clientAddr net.Addr) (io.ReadCloser, in
 		return nil, 0, fmt.Errorf("unknown firmware type %d", i)
 	}
 
-	return ioutil.NopCloser(bytes.NewBuffer(bs)), int64(len(bs)), nil
+	return io.NopCloser(bytes.NewBuffer(bs)), int64(len(bs)), nil
 }

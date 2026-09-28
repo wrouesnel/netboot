@@ -41,9 +41,9 @@ const (
 	txClientBroadcast txType = iota
 	// Packet MUST be broadcast from server side.
 	txServerBroadcast
-	// Packet MUST be unicasted to port 67 of RelayAddr
+	// Packet MUST be unicasted to port 67 of RelayAddr.
 	txRelayAddr
-	// Packet MUST be unicasted to port 68 of ClientAddr
+	// Packet MUST be unicasted to port 68 of ClientAddr.
 	txClientAddr
 	// Packet SHOULD be unicasted to port 68 of YourAddr, with the
 	// link-layer destination explicitly set to HardwareAddr. You MUST

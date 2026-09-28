@@ -1,6 +1,9 @@
-**/.dockerignore
-**/Dockerfile
-.git
-Makefile
-*.md
-LICENSE
+# Keep .git: the build uses `git describe` to stamp the version.
+/bin/
+/release/
+/.coverage/
+/.cover.out
+/.junit/
+/.bin/
+/pixiecore-bin
+/pixiecore-apache2

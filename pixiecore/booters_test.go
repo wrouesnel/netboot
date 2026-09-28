@@ -17,7 +17,6 @@ package pixiecore
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -38,7 +37,7 @@ func mustMAC(s string) net.HardwareAddr {
 }
 
 func mustWrite(dir, path, contents string) {
-	if err := ioutil.WriteFile(filepath.Join(dir, path), []byte(contents), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, path), []byte(contents), 0644); err != nil {
 		panic(err)
 	}
 }
@@ -48,7 +47,7 @@ func mustRead(f io.ReadCloser, sz int64, err error) string {
 		panic(err)
 	}
 	defer f.Close()
-	bs, err := ioutil.ReadAll(f)
+	bs, err := io.ReadAll(f)
 	if err != nil {
 		panic(err)
 	}
@@ -59,7 +58,7 @@ func mustRead(f io.ReadCloser, sz int64, err error) string {
 }
 
 func TestStaticBooter(t *testing.T) {
-	dir, err := ioutil.TempDir("", "pixiecore-static-booter-test")
+	dir, err := os.MkdirTemp("", "pixiecore-static-booter-test")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -140,18 +139,18 @@ func TestAPIBooter(t *testing.T) {
 	}
 
 	http.HandleFunc("/v1/boot/01:02:03:04:05:06", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
   "kernel": "/foo",
   "initrd": ["/bar", "/baz"],
   "cmdline": "test={{ URL \"/quux\" }} other=thing",
   "message": "Hello from test world!"
 }`))
 	})
-	http.HandleFunc("/foo", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`foo file`)) })
-	http.HandleFunc("/bar", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`bar file`)) })
-	http.HandleFunc("/baz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`baz file`)) })
-	http.HandleFunc("/quux", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`quux file`)) })
-	go http.Serve(l, nil)
+	http.HandleFunc("/foo", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`foo file`)) })
+	http.HandleFunc("/bar", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`bar file`)) })
+	http.HandleFunc("/baz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`baz file`)) })
+	http.HandleFunc("/quux", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`quux file`)) })
+	go http.Serve(l, nil) //nolint:errcheck // Stops when the test closes l.
 
 	// Finally, build an APIBooter and test it.
 	b, err := APIBooter(fmt.Sprintf("http://%s/", l.Addr()), 100*time.Millisecond)

@@ -6,7 +6,7 @@ import (
 	"net"
 	"time"
 
-	"go.universe.tf/netboot/dhcp6"
+	"github.com/wrouesnel/netboot/dhcp6"
 )
 
 // ServerV6 boots machines using a Booter.

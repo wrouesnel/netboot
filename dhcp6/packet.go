@@ -5,10 +5,10 @@ import (
 	"fmt"
 )
 
-// MessageType contains ID identifying DHCP message type. See RFC 3315
+// MessageType contains ID identifying DHCP message type. See RFC 3315.
 type MessageType uint8
 
-// Constants for each of the dhcp message types defined in RFC 3315
+// Constants for each of the dhcp message types defined in RFC 3315.
 const (
 	MsgSolicit MessageType = iota + 1
 	MsgAdvertise
@@ -25,14 +25,14 @@ const (
 	MsgRelayRepl
 )
 
-// Packet represents a DHCPv6 packet
+// Packet represents a DHCPv6 packet.
 type Packet struct {
 	Type          MessageType
 	TransactionID [3]byte
 	Options       Options
 }
 
-// Unmarshal creates a Packet out of its serialized representation
+// Unmarshal creates a Packet out of its serialized representation.
 func Unmarshal(bs []byte, packetLength int) (*Packet, error) {
 	options, err := UnmarshalOptions(bs[4:packetLength])
 	if err != nil {
@@ -43,14 +43,14 @@ func Unmarshal(bs []byte, packetLength int) (*Packet, error) {
 	return ret, nil
 }
 
-// Marshal serializes the Packet
+// Marshal serializes the Packet.
 func (p *Packet) Marshal() ([]byte, error) {
 	marshalledOptions, err := p.Options.Marshal()
 	if err != nil {
 		return nil, fmt.Errorf("packet has malformed options section: %s", err)
 	}
 
-	ret := make([]byte, len(marshalledOptions)+4, len(marshalledOptions)+4)
+	ret := make([]byte, len(marshalledOptions)+4)
 	ret[0] = byte(p.Type)
 	copy(ret[1:], p.TransactionID[:])
 	copy(ret[4:], marshalledOptions)
@@ -58,7 +58,7 @@ func (p *Packet) Marshal() ([]byte, error) {
 	return ret, nil
 }
 
-// ShouldDiscard returns true if the Packet fails validation
+// ShouldDiscard returns true if the Packet fails validation.
 func (p *Packet) ShouldDiscard(serverDuid []byte) error {
 	switch p.Type {
 	case MsgSolicit:
@@ -70,7 +70,7 @@ func (p *Packet) ShouldDiscard(serverDuid []byte) error {
 	case MsgRelease:
 		return nil // FIX ME!
 	default:
-		return fmt.Errorf("Unknown packet")
+		return fmt.Errorf("unknown packet")
 	}
 }
 
@@ -99,7 +99,7 @@ func shouldDiscardRequest(p *Packet, serverDuid []byte) error {
 	if !options.HasServerID() {
 		return fmt.Errorf("'Request' packet has no server id option")
 	}
-	if bytes.Compare(options.ServerID(), serverDuid) != 0 {
+	if !bytes.Equal(options.ServerID(), serverDuid) {
 		return fmt.Errorf("'Request' packet's server id option (%d) is different from ours (%d)", options.ServerID(), serverDuid)
 	}
 	return nil
@@ -113,7 +113,7 @@ func shouldDiscardInformationRequest(p *Packet, serverDuid []byte) error {
 	if options.HasIaNa() || options.HasIaTa() {
 		return fmt.Errorf("'Information-request' packet has an IA option present")
 	}
-	if options.HasServerID() && (bytes.Compare(options.ServerID(), serverDuid) != 0) {
+	if options.HasServerID() && !bytes.Equal(options.ServerID(), serverDuid) {
 		return fmt.Errorf("'Information-request' packet's server id option (%d) is different from ours (%d)", options.ServerID(), serverDuid)
 	}
 	return nil

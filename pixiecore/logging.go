@@ -101,6 +101,7 @@ func (s *Server) debug(subsystem, format string, args ...interface{}) {
 	s.Debug(subsystem, fmt.Sprintf(format, args...))
 }
 
+//nolint:unused // Kept for debugging packet handling.
 func (s *Server) debugPacket(subsystem string, layer int, packet []byte) {
 	if s.Debug == nil {
 		return
