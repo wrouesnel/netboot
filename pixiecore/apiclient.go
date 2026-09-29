@@ -16,6 +16,9 @@ import (
 const (
 	HeaderPixiecoreIP       = "X-Pixiecore-IP"
 	HeaderPixiecoreHostname = "X-Pixiecore-Hostname"
+	// HeaderPixiecoreProxy is set to "true" when Pixiecore proxies
+	// requests from the subnet it manages to the API server.
+	HeaderPixiecoreProxy = "X-Pixiecore-Proxy"
 )
 
 // APIClientConfig configures the HTTP client used to talk to a

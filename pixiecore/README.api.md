@@ -32,6 +32,9 @@ several Pixiecores:
 - `X-Pixiecore-Hostname`: the hostname of the Pixiecore server. By
   default this is the system hostname. Set it with
   `--api-pixiecore-hostname`.
+- `X-Pixiecore-Proxy`: set to `true` if Pixiecore was run with
+  `--api-proxy`, meaning it proxies requests from the subnet it manages
+  to the API server. It's absent otherwise.
 
 These headers aren't sent to other servers, such as those hosting
 kernels or initrds the API response points to. They're provided by

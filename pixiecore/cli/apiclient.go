@@ -35,6 +35,7 @@ func apiClientFlags(cmd *cobra.Command) {
 	cmd.Flags().String("api-username", "", "Username for HTTP basic auth to the API server")
 	cmd.Flags().String("api-password-file", "", "File containing the password for HTTP basic auth to the API server (or set "+envAPIPassword+")")
 	cmd.Flags().String("api-pixiecore-ip", "", "IP address sent to the API server in the "+pixiecore.HeaderPixiecoreIP+" header (default: --listen-addr if set, else the local address used to reach the API server)")
+	cmd.Flags().Bool("api-proxy", false, "Tell the API server, with the "+pixiecore.HeaderPixiecoreProxy+" header, that Pixiecore proxies requests from the subnet it manages to the API server")
 	cmd.Flags().String("api-pixiecore-hostname", "", "Hostname sent to the API server in the "+pixiecore.HeaderPixiecoreHostname+" header (default: the system hostname)")
 	tpmFlags(cmd)
 }
@@ -162,6 +163,13 @@ func identityHeaders(cmd *cobra.Command, apiURL string) (http.Header, error) {
 	h := http.Header{}
 	h.Set(pixiecore.HeaderPixiecoreIP, ip)
 	h.Set(pixiecore.HeaderPixiecoreHostname, hostname)
+	proxy, err := cmd.Flags().GetBool("api-proxy")
+	if err != nil {
+		return nil, fmt.Errorf("error reading flag: %w", err)
+	}
+	if proxy {
+		h.Set(pixiecore.HeaderPixiecoreProxy, "true")
+	}
 	return h, nil
 }
 

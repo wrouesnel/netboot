@@ -133,6 +133,7 @@ func TestIdentityHeaders(t *testing.T) {
 		args         []string
 		wantIP       string
 		wantHostname string
+		wantProxy    string
 		wantErr      bool
 	}{
 		// The loopback API server is reached from the loopback address.
@@ -144,6 +145,7 @@ func TestIdentityHeaders(t *testing.T) {
 			wantIP:       "2001:db8::1",
 			wantHostname: "pxe1",
 		},
+		{args: []string{"--api-proxy"}, wantIP: "127.0.0.1", wantHostname: hostname, wantProxy: "true"},
 		{args: []string{"--api-pixiecore-ip", "not-an-ip"}, wantErr: true},
 	}
 	for _, tc := range cases {
@@ -168,6 +170,9 @@ func TestIdentityHeaders(t *testing.T) {
 		}
 		if got := h.Get(pixiecore.HeaderPixiecoreHostname); got != tc.wantHostname {
 			t.Errorf("identityHeaders(%q): hostname %q, want %q", tc.args, got, tc.wantHostname)
+		}
+		if got := h.Get(pixiecore.HeaderPixiecoreProxy); got != tc.wantProxy {
+			t.Errorf("identityHeaders(%q): proxy %q, want %q", tc.args, got, tc.wantProxy)
 		}
 	}
 }
