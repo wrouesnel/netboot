@@ -63,23 +63,24 @@ func testClientCert(t *testing.T) (*x509.CertPool, *tls.Certificate) {
 	return pool, &tls.Certificate{Certificate: [][]byte{leaf.Raw}, PrivateKey: leafKey, Leaf: leaf}
 }
 
-// authLog records the Authorization header of each request to a server.
+// authLog records the headers of each request to a server.
 type authLog struct {
 	sync.Mutex
-	m map[string]string
+	m map[string]http.Header
 }
 
 func (a *authLog) record(r *http.Request) {
 	a.Lock()
 	defer a.Unlock()
-	a.m[r.URL.Path] = r.Header.Get("Authorization")
+	a.m[r.URL.Path] = r.Header.Clone()
 }
 
-func (a *authLog) get(path string) (string, bool) {
+// get returns the named header of the request for path.
+func (a *authLog) get(path, header string) (string, bool) {
 	a.Lock()
 	defer a.Unlock()
-	v, ok := a.m[path]
-	return v, ok
+	h, ok := a.m[path]
+	return h.Get(header), ok
 }
 
 func TestAPIBooterTLS(t *testing.T) {
@@ -87,14 +88,14 @@ func TestAPIBooterTLS(t *testing.T) {
 
 	// A second server on a different origin, which serves the initrd.
 	// It must never see the API credentials.
-	otherLog := &authLog{m: map[string]string{}}
+	otherLog := &authLog{m: map[string]http.Header{}}
 	other := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		otherLog.record(r)
 		_, _ = w.Write([]byte("other file"))
 	}))
 	defer other.Close()
 
-	apiLog := &authLog{m: map[string]string{}}
+	apiLog := &authLog{m: map[string]http.Header{}}
 	api := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		apiLog.record(r)
 		if u, p, ok := r.BasicAuth(); !ok || u != "user" || p != "secret" {
@@ -120,6 +121,9 @@ func TestAPIBooterTLS(t *testing.T) {
 	roots.AddCert(other.Certificate())
 
 	m := Machine{MAC: mustMAC("01:02:03:04:05:06"), Arch: ArchX64}
+	header := http.Header{}
+	header.Set(HeaderPixiecoreIP, "192.0.2.1")
+	header.Set(HeaderPixiecoreHostname, "pxe1")
 
 	cases := []struct {
 		name    string
@@ -153,6 +157,7 @@ func TestAPIBooterTLS(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.cfg.Timeout = 5 * time.Second
+			tc.cfg.Header = header
 			client, err := NewAPIClient(api.URL, tc.cfg)
 			if err != nil {
 				t.Fatalf("NewAPIClient: %s", err)
@@ -179,11 +184,20 @@ func TestAPIBooterTLS(t *testing.T) {
 			if v := mustRead(b.ReadBootFile(spec.Initrd[0])); v != "other file" {
 				t.Errorf("initrd: got %q", v)
 			}
-			if auth, _ := apiLog.get("/kernel"); auth == "" {
-				t.Errorf("kernel fetch from API server didn't send credentials")
+			for _, path := range []string{"/v1/boot/01:02:03:04:05:06", "/kernel"} {
+				if auth, _ := apiLog.get(path, "Authorization"); auth == "" {
+					t.Errorf("%s from API server didn't send credentials", path)
+				}
+				for k := range header {
+					if v, _ := apiLog.get(path, k); v != header.Get(k) {
+						t.Errorf("%s from API server: %s = %q, want %q", path, k, v, header.Get(k))
+					}
+				}
 			}
-			if auth, ok := otherLog.get("/initrd"); !ok || auth != "" {
-				t.Errorf("initrd fetch from another server: fetched=%v, Authorization=%q, want no credentials", ok, auth)
+			for _, k := range []string{"Authorization", HeaderPixiecoreIP, HeaderPixiecoreHostname} {
+				if v, ok := otherLog.get("/initrd", k); !ok || v != "" {
+					t.Errorf("initrd fetch from another server: fetched=%v, %s=%q, want none", ok, k, v)
+				}
 			}
 		})
 	}
@@ -204,6 +218,21 @@ func TestCanonicalHost(t *testing.T) {
 		}
 		if got := canonicalHost(u.URL); got != want {
 			t.Errorf("canonicalHost(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestDetectLocalIP(t *testing.T) {
+	for in, want := range map[string]string{
+		"http://127.0.0.1:8080/": "127.0.0.1",
+		"https://127.0.0.1/":     "127.0.0.1",
+	} {
+		ip, err := DetectLocalIP(in)
+		if err != nil {
+			t.Fatalf("DetectLocalIP(%q): %s", in, err)
+		}
+		if ip.String() != want {
+			t.Errorf("DetectLocalIP(%q) = %s, want %s", in, ip, want)
 		}
 	}
 }

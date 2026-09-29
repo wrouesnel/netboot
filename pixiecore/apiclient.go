@@ -12,6 +12,12 @@ import (
 	"time"
 )
 
+// Headers Pixiecore sends to the API server to identify itself.
+const (
+	HeaderPixiecoreIP       = "X-Pixiecore-IP"
+	HeaderPixiecoreHostname = "X-Pixiecore-Hostname"
+)
+
 // APIClientConfig configures the HTTP client used to talk to a
 // Pixiecore API server.
 type APIClientConfig struct {
@@ -34,6 +40,11 @@ type APIClientConfig struct {
 	// servers that boot files are fetched from.
 	Username string
 	Password string
+
+	// Header holds extra headers to send with every request to the API
+	// server, such as HeaderPixiecoreIP. Like basic auth credentials,
+	// they are only sent to the API server itself.
+	Header http.Header
 }
 
 // NewAPIClient returns an HTTP client for the API server at apiURL.
@@ -64,11 +75,12 @@ func NewAPIClient(apiURL string, cfg APIClientConfig) (*http.Client, error) {
 	}
 
 	var rt http.RoundTripper = t
-	if cfg.Username != "" {
-		rt = &basicAuthTransport{
+	if cfg.Username != "" || len(cfg.Header) > 0 {
+		rt = &apiOriginTransport{
 			next:     t,
 			scheme:   u.Scheme,
 			host:     canonicalHost(u),
+			header:   cfg.Header.Clone(),
 			username: cfg.Username,
 			password: cfg.Password,
 		}
@@ -77,21 +89,47 @@ func NewAPIClient(apiURL string, cfg APIClientConfig) (*http.Client, error) {
 	return &http.Client{Transport: rt, Timeout: cfg.Timeout}, nil
 }
 
-// basicAuthTransport adds basic auth credentials to requests for a
-// single origin.
-type basicAuthTransport struct {
+// apiOriginTransport adds headers and basic auth credentials to
+// requests for a single origin.
+type apiOriginTransport struct {
 	next               http.RoundTripper
 	scheme, host       string
+	header             http.Header
 	username, password string
 }
 
-func (b *basicAuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.URL.Scheme != b.scheme || canonicalHost(req.URL) != b.host || req.Header.Get("Authorization") != "" {
+func (b *apiOriginTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Scheme != b.scheme || canonicalHost(req.URL) != b.host {
 		return b.next.RoundTrip(req)
 	}
 	req = req.Clone(req.Context())
-	req.SetBasicAuth(b.username, b.password)
+	for k, v := range b.header {
+		req.Header[k] = v
+	}
+	if b.username != "" && req.Header.Get("Authorization") == "" {
+		req.SetBasicAuth(b.username, b.password)
+	}
 	return b.next.RoundTrip(req)
+}
+
+// DetectLocalIP returns the local IP address the system would use to
+// reach the host in apiURL. No packets are sent, but the host is
+// resolved if it is a name.
+func DetectLocalIP(apiURL string) (net.IP, error) {
+	u, err := url.Parse(apiURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid API URL %q: %s", apiURL, err)
+	}
+	conn, err := net.Dial("udp", canonicalHost(u))
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	addr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return nil, fmt.Errorf("unexpected local address type %T", conn.LocalAddr())
+	}
+	return addr.IP, nil
 }
 
 // canonicalHost returns u's host:port, with the default port filled in.

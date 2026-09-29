@@ -20,6 +20,24 @@ The API consists of a single endpoint:
 `<apiserver-prefix>/v1/boot/<mac-addr>`. Pixiecore calls this endpoint
 to learn whether/how to boot a machine with a given MAC address.
 
+Every request Pixiecore makes to the API server (including fetches of
+kernels and initrds hosted on the API server) carries headers
+identifying the Pixiecore instance, so one API server can serve
+several Pixiecores:
+
+- `X-Pixiecore-IP`: the IP address of the Pixiecore server. By default
+  this is `--listen-addr` if it's a specific address, otherwise the
+  local address Pixiecore uses to reach the API server. Set it with
+  `--api-pixiecore-ip`.
+- `X-Pixiecore-Hostname`: the hostname of the Pixiecore server. By
+  default this is the system hostname. Set it with
+  `--api-pixiecore-hostname`.
+
+These headers aren't sent to other servers, such as those hosting
+kernels or initrds the API response points to. They're provided by
+Pixiecore itself, so don't use them for authentication; see
+[Securing the API](#securing-the-api).
+
 Any non-200 response from the server will cause Pixieboot to ignore
 the requesting machine.
 

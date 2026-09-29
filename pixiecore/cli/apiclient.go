@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -33,6 +34,8 @@ func apiClientFlags(cmd *cobra.Command) {
 	cmd.Flags().String("api-client-key", "", "PEM private key for --api-client-cert")
 	cmd.Flags().String("api-username", "", "Username for HTTP basic auth to the API server")
 	cmd.Flags().String("api-password-file", "", "File containing the password for HTTP basic auth to the API server (or set "+envAPIPassword+")")
+	cmd.Flags().String("api-pixiecore-ip", "", "IP address sent to the API server in the "+pixiecore.HeaderPixiecoreIP+" header (default: --listen-addr if set, else the local address used to reach the API server)")
+	cmd.Flags().String("api-pixiecore-hostname", "", "Hostname sent to the API server in the "+pixiecore.HeaderPixiecoreHostname+" header (default: the system hostname)")
 	tpmFlags(cmd)
 }
 
@@ -103,6 +106,10 @@ func apiClientFromFlags(cmd *cobra.Command, apiURL string) *http.Client {
 		fatalf("An API password was given without --api-username")
 	}
 
+	if cfg.Header, err = identityHeaders(cmd, apiURL); err != nil {
+		fatalf("%s", err)
+	}
+
 	if u, err := url.Parse(apiURL); err == nil && u.Scheme == "http" && (cfg.Username != "" || cfg.ClientCertificate != nil) {
 		fmt.Fprintf(os.Stderr, "WARNING: API URL %q is not https, credentials will be sent in the clear\n", apiURL)
 	}
@@ -115,6 +122,47 @@ func apiClientFromFlags(cmd *cobra.Command, apiURL string) *http.Client {
 		fatalf("Couldn't create API client: %s", err)
 	}
 	return client
+}
+
+// identityHeaders returns the headers that tell the API server which
+// Pixiecore instance a request came from. Values not set by flags are
+// detected.
+func identityHeaders(cmd *cobra.Command, apiURL string) (http.Header, error) {
+	ip := mustGetString(cmd, "api-pixiecore-ip")
+	hostname := mustGetString(cmd, "api-pixiecore-hostname")
+
+	if ip != "" {
+		if net.ParseIP(ip) == nil {
+			return nil, fmt.Errorf("--api-pixiecore-ip %q is not an IP address", ip)
+		}
+	} else {
+		// Prefer the address Pixiecore is serving on, since that's
+		// the address machines will boot from.
+		if f := cmd.Flags().Lookup("listen-addr"); f != nil {
+			if addr := net.ParseIP(f.Value.String()); addr != nil && !addr.IsUnspecified() {
+				ip = addr.String()
+			}
+		}
+		if ip == "" {
+			addr, err := pixiecore.DetectLocalIP(apiURL)
+			if err != nil {
+				return nil, fmt.Errorf("couldn't detect the local IP address for the API server, set --api-pixiecore-ip: %w", err)
+			}
+			ip = addr.String()
+		}
+	}
+
+	if hostname == "" {
+		var err error
+		if hostname, err = os.Hostname(); err != nil {
+			return nil, fmt.Errorf("couldn't get the hostname, set --api-pixiecore-hostname: %w", err)
+		}
+	}
+
+	h := http.Header{}
+	h.Set(pixiecore.HeaderPixiecoreIP, ip)
+	h.Set(pixiecore.HeaderPixiecoreHostname, hostname)
+	return h, nil
 }
 
 // tpmCertificateFromFlags loads (or creates) the TPM client key and

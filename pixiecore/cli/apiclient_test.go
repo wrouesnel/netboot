@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/wrouesnel/netboot/pixiecore"
 )
 
 func writePEM(t *testing.T, path, typ string, der []byte) {
@@ -119,6 +120,54 @@ func TestTPMEnabled(t *testing.T) {
 		got, err := tpmEnabled(cmd)
 		if (err != nil) != tc.wantErr || got != tc.want {
 			t.Errorf("tpmEnabled(%q) = %v, %v; want %v, error=%v", tc.args, got, err, tc.want, tc.wantErr)
+		}
+	}
+}
+
+func TestIdentityHeaders(t *testing.T) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		args         []string
+		wantIP       string
+		wantHostname string
+		wantErr      bool
+	}{
+		// The loopback API server is reached from the loopback address.
+		{args: nil, wantIP: "127.0.0.1", wantHostname: hostname},
+		{args: []string{"--listen-addr", "0.0.0.0"}, wantIP: "127.0.0.1", wantHostname: hostname},
+		{args: []string{"--listen-addr", "192.0.2.1"}, wantIP: "192.0.2.1", wantHostname: hostname},
+		{
+			args:         []string{"--listen-addr", "192.0.2.1", "--api-pixiecore-ip", "2001:db8::1", "--api-pixiecore-hostname", "pxe1"},
+			wantIP:       "2001:db8::1",
+			wantHostname: "pxe1",
+		},
+		{args: []string{"--api-pixiecore-ip", "not-an-ip"}, wantErr: true},
+	}
+	for _, tc := range cases {
+		cmd := &cobra.Command{}
+		cmd.Flags().String("listen-addr", "", "")
+		apiClientFlags(cmd)
+		if err := cmd.ParseFlags(tc.args); err != nil {
+			t.Fatal(err)
+		}
+		h, err := identityHeaders(cmd, "http://127.0.0.1:8080")
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("identityHeaders(%q): want error", tc.args)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("identityHeaders(%q): %s", tc.args, err)
+		}
+		if got := h.Get(pixiecore.HeaderPixiecoreIP); got != tc.wantIP {
+			t.Errorf("identityHeaders(%q): IP %q, want %q", tc.args, got, tc.wantIP)
+		}
+		if got := h.Get(pixiecore.HeaderPixiecoreHostname); got != tc.wantHostname {
+			t.Errorf("identityHeaders(%q): hostname %q, want %q", tc.args, got, tc.wantHostname)
 		}
 	}
 }
