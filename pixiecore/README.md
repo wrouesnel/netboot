@@ -132,6 +132,10 @@ with HTTP basic auth, a client certificate, or a client certificate
 whose key is held in the system TPM. See
 [Securing the API](README.api.md#securing-the-api).
 
+Pixiecore logs its version when it starts, and its HTTP server (the
+`--port` flag) reports it at `/version`, e.g.
+`{"version":"v1.2.3"}`.
+
 You can find a sample API server implementation in the `api-example`
 subdirectory. The code is not production-grade, but gives a short
 illustration of how the protocol works by reimplementing a subset of

@@ -16,12 +16,16 @@ package pixiecore
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
+
+	"github.com/wrouesnel/netboot/version"
 )
 
 type booterFunc func(Machine) (*Spec, error)
@@ -195,5 +199,33 @@ func TestFile(t *testing.T) {
 	expected = "quux stuff"
 	if rr.Body.String() != expected {
 		t.Fatalf("Wrong file contents, want %q, got %q", expected, rr.Body.Bytes())
+	}
+}
+
+func TestVersion(t *testing.T) {
+	s := &Server{}
+	mux := http.NewServeMux()
+	s.serveHTTP(mux)
+
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest("GET", "/version", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /version: status %d", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("GET /version: Content-Type %q", ct)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("GET /version: invalid JSON %q: %s", rr.Body, err)
+	}
+	if want := map[string]string{"version": version.Version}; !reflect.DeepEqual(got, want) {
+		t.Errorf("GET /version = %v, want %v", got, want)
+	}
+
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest("POST", "/version", nil))
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST /version: status %d, want %d", rr.Code, http.StatusMethodNotAllowed)
 	}
 }

@@ -24,6 +24,8 @@ import (
 	"text/template"
 
 	"github.com/wrouesnel/netboot/dhcp4"
+
+	"github.com/wrouesnel/netboot/version"
 )
 
 const (
@@ -249,6 +251,7 @@ func (s *Server) Serve() error {
 	// blocking.
 	s.errs = make(chan error, 6)
 
+	s.log("Init", "Starting Pixiecore %s", version.Version)
 	s.debug("Init", "Starting Pixiecore goroutines")
 
 	go func() { s.errs <- s.serveDHCP(dhcp) }()

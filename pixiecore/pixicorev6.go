@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/wrouesnel/netboot/dhcp6"
+
+	"github.com/wrouesnel/netboot/version"
 )
 
 // ServerV6 boots machines using a Booter.
@@ -36,6 +38,7 @@ func NewServerV6() *ServerV6 {
 // Serve listens for machines attempting to boot, and responds to
 // their DHCPv6 requests.
 func (s *ServerV6) Serve() error {
+	s.log("Init", "Starting Pixiecore %s", version.Version)
 	s.log("dhcp", "starting...")
 
 	dhcp, err := dhcp6.NewConn(s.Address, s.Port)

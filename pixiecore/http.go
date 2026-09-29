@@ -16,6 +16,7 @@ package pixiecore
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,8 @@ import (
 	"strconv"
 	"text/template"
 	"time"
+
+	"github.com/wrouesnel/netboot/version"
 )
 
 func serveHTTP(l net.Listener, handlers ...func(*http.ServeMux)) error {
@@ -42,6 +45,17 @@ func (s *Server) serveHTTP(mux *http.ServeMux) {
 	mux.HandleFunc("/_/ipxe", s.handleIpxe)
 	mux.HandleFunc("/_/file", s.handleFile)
 	mux.HandleFunc("/_/booting", s.handleBooting)
+	mux.HandleFunc("GET /version", s.handleVersion)
+}
+
+// handleVersion returns the Pixiecore version as a JSON object.
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(struct {
+		Version string `json:"version"`
+	}{version.Version}); err != nil {
+		s.debug("HTTP", "Writing version response to %s: %s", r.RemoteAddr, err)
+	}
 }
 
 func (s *Server) handleIpxe(w http.ResponseWriter, r *http.Request) {
