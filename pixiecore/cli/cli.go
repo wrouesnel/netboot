@@ -81,6 +81,7 @@ func serverConfigFlags(cmd *cobra.Command) {
 	cmd.Flags().String("ipxe-ipxe", "", "Path to an iPXE binary for chainloading from another iPXE")
 	cmd.Flags().String("ipxe-efi32", "", "Path to an iPXE binary for 32-bit UEFI")
 	cmd.Flags().String("ipxe-efi64", "", "Path to an iPXE binary for 64-bit UEFI")
+	httpTLSFlags(cmd)
 
 	// Development flags, hidden from normal use.
 	cmd.Flags().String("ui-assets-dir", "", "UI assets directory (used for development)")
@@ -216,6 +217,7 @@ func serverFromFlags(cmd *cobra.Command) *pixiecore.Server {
 	if addr != "" {
 		ret.Address = addr
 	}
+	httpTLSFromFlags(cmd, ret)
 
 	return ret
 }

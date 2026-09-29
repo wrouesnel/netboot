@@ -235,7 +235,7 @@ func (s *Server) offerDHCP(pkt *dhcp4.Packet, mach Machine, serverIP net.IP, fwt
 		// We've already gone through one round of chainloading, now
 		// we can finally chainload to HTTP for the actual boot
 		// script.
-		resp.BootFilename = fmt.Sprintf("http://%s:%d/_/ipxe?arch=%d&mac=%s", serverIP, s.HTTPPort, mach.Arch, mach.MAC)
+		resp.BootFilename = fmt.Sprintf("%s/_/ipxe?arch=%d&mac=%s", s.httpBaseURL(serverIP), mach.Arch, mach.MAC)
 
 	default:
 		return nil, fmt.Errorf("unknown firmware type %d", fwtype)

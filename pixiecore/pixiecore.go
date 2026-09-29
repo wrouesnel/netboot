@@ -16,6 +16,8 @@ package pixiecore // import "github.com/wrouesnel/netboot/pixiecore"
 
 import (
 	"bytes"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -29,10 +31,11 @@ import (
 )
 
 const (
-	portDHCP = 67
-	portTFTP = 69
-	portHTTP = 80
-	portPXE  = 4011
+	portDHCP  = 67
+	portTFTP  = 69
+	portHTTP  = 80
+	portHTTPS = 443
+	portPXE   = 4011
 )
 
 // An ID is an identifier used by Booters to reference files.
@@ -164,6 +167,20 @@ type Server struct {
 	// HTTP port for human-readable information. Can be the same as
 	// HTTPPort.
 	HTTPStatusPort int
+	// DisableHTTP turns off the HTTP server on HTTPPort. HTTPS must
+	// then be enabled.
+	DisableHTTP bool
+	// TLSConfig, if set, also serves boot services over HTTPS on
+	// HTTPSPort, and machines are booted over HTTPS. The iPXE binaries
+	// must trust the certificate.
+	TLSConfig *tls.Config
+	// HTTPS port for boot services, if TLSConfig is set.
+	HTTPSPort int
+	// HTTPHost is the host name machines use to reach the boot
+	// HTTP(S) server. If empty, Pixiecore's IP address is used. Set it
+	// if the TLS certificate is for a host name rather than the IP
+	// address.
+	HTTPHost string
 
 	// Ipxe lists the supported bootable Firmwares, and their
 	// associated ipxe binary.
@@ -214,6 +231,12 @@ func (s *Server) Serve() error {
 	if s.HTTPPort == 0 {
 		s.HTTPPort = portHTTP
 	}
+	if s.HTTPSPort == 0 {
+		s.HTTPSPort = portHTTPS
+	}
+	if s.DisableHTTP && s.TLSConfig == nil {
+		return errors.New("HTTP is disabled and HTTPS isn't enabled, one must be enabled to boot machines")
+	}
 
 	newDHCP := dhcp4.NewConn
 	if s.DHCPNoBind {
@@ -235,16 +258,37 @@ func (s *Server) Serve() error {
 		tftp.Close()
 		return err
 	}
-	http, err := net.Listen("tcp", fmt.Sprintf("%s:%d", s.Address, s.HTTPPort))
-	if err != nil {
-		dhcp.Close()
-		tftp.Close()
-		pxe.Close()
-		return err
+	// Boot services are served on each of these.
+	var httpListeners []net.Listener
+	closeHTTP := func() {
+		for _, l := range httpListeners {
+			l.Close()
+		}
+	}
+	if !s.DisableHTTP {
+		l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", s.Address, s.HTTPPort))
+		if err != nil {
+			dhcp.Close()
+			tftp.Close()
+			pxe.Close()
+			return err
+		}
+		httpListeners = append(httpListeners, l)
+	}
+	if s.TLSConfig != nil {
+		l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", s.Address, s.HTTPSPort))
+		if err != nil {
+			dhcp.Close()
+			tftp.Close()
+			pxe.Close()
+			closeHTTP()
+			return err
+		}
+		httpListeners = append(httpListeners, tls.NewListener(l, s.TLSConfig))
 	}
 
 	s.events = make(map[string][]machineEvent)
-	// 5 buffer slots, one for each goroutine, plus one for
+	// 6 buffer slots, one for each goroutine, plus one for
 	// Shutdown(). We only ever pull the first error out, but shutdown
 	// will likely generate some spurious errors from the other
 	// goroutines, and we want them to be able to dump them without
@@ -257,14 +301,16 @@ func (s *Server) Serve() error {
 	go func() { s.errs <- s.serveDHCP(dhcp) }()
 	go func() { s.errs <- s.servePXE(pxe) }()
 	go func() { s.errs <- s.serveTFTP(tftp) }()
-	go func() { s.errs <- serveHTTP(http, s.serveHTTP) }()
+	for _, l := range httpListeners {
+		go func() { s.errs <- serveHTTP(l, s.serveHTTP) }()
+	}
 
 	// Wait for either a fatal error, or Shutdown().
 	err = <-s.errs
 	dhcp.Close()
 	tftp.Close()
 	pxe.Close()
-	http.Close()
+	closeHTTP()
 	return err
 }
 

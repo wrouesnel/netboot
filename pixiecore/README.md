@@ -132,14 +132,65 @@ with HTTP basic auth, a client certificate, or a client certificate
 whose key is held in the system TPM. See
 [Securing the API](README.api.md#securing-the-api).
 
-Pixiecore logs its version when it starts, and its HTTP server (the
-`--port` flag) reports it at `/version`, e.g.
-`{"version":"v1.2.3"}`.
+Pixiecore logs its version when it starts, and its HTTP(S) servers
+report it at `/version`, e.g. `{"version":"v1.2.3"}`.
 
 You can find a sample API server implementation in the `api-example`
 subdirectory. The code is not production-grade, but gives a short
 illustration of how the protocol works by reimplementing a subset of
 Pixiecore's static mode as an API server.
+
+## Booting over HTTPS
+
+Once iPXE is running, it fetches the boot script, kernel and initrds
+from Pixiecore over HTTP. To use HTTPS instead, give Pixiecore a
+certificate and key:
+
+```shell
+sudo pixiecore boot kernel initrd \
+    --http-tls-cert /etc/pixiecore/chain.pem \
+    --http-tls-key /etc/pixiecore/key.pem \
+    --http-disabled
+```
+
+- HTTPS is served on `--https-port` (443 by default). Machines are
+  booted over HTTPS when it's enabled. HTTP stays available on `--port`
+  unless you pass `--http-disabled`, and one or the other must be
+  enabled.
+- By default machines reach Pixiecore at its IP address, so the
+  certificate needs that IP address as a subject alternative name. To
+  use a host name instead, set `--http-host`.
+- Kernels and initrds that Pixiecore proxies are served over HTTPS too,
+  as are URLs made by the `ID` template function in the kernel
+  commandline, so the booted OS must also trust the certificate.
+
+iPXE doesn't use the system's CA certificates. It trusts a certificate
+chain if the chain ends at a certificate whose SHA-256 fingerprint is
+built into it, and Pixiecore's iPXE binaries are built trusting the
+iPXE project's root CA. So Pixiecore rewrites that list in the iPXE
+binaries it serves, to trust the last certificate in `--http-tls-cert`.
+Put your CA certificate at the end of the file (or use a self-signed
+certificate). To trust more certificates, for example for HTTPS servers
+a custom `ipxe-script` fetches from, add
+`--ipxe-trust-cert ca.pem`. These replace the built-in list, up to 8
+certificates. The servers must send chains ending at a trusted
+certificate.
+
+Only the UEFI iPXE binaries can be rewritten. The BIOS binaries are
+compressed, so they only trust the certificates they were built with,
+and Pixiecore warns about this at startup. To boot BIOS machines over
+HTTPS with your own CA, build Pixiecore with the CA built in:
+
+```shell
+MAGE_IPXE_TRUST=/path/to/ca.pem go run mage.go updateIpxe binary
+```
+
+`MAGE_IPXE_TRUST` is a comma-separated list of PEM files. The iPXE
+config Pixiecore builds with is in [ipxe-config](ipxe-config), which
+enables HTTPS for BIOS builds.
+
+HTTPS protects the boot after iPXE starts. iPXE itself is still loaded
+over TFTP without any authentication.
 
 ## Running in containers
 

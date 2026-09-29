@@ -16,13 +16,16 @@ package pixiecore
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/wrouesnel/netboot/version"
@@ -227,5 +230,45 @@ func TestVersion(t *testing.T) {
 	mux.ServeHTTP(rr, httptest.NewRequest("POST", "/version", nil))
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Errorf("POST /version: status %d, want %d", rr.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestIpxeHTTPS(t *testing.T) {
+	booter := func(m Machine) (*Spec, error) {
+		return &Spec{Kernel: "k", Cmdline: `f={{ ID "f" }}`}, nil
+	}
+	s := &Server{Booter: booterFunc(booter), events: make(map[string][]machineEvent)}
+
+	// A script requested over HTTPS refers to files over HTTPS.
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/_/ipxe?mac=01:02:03:04:05:06&arch=0", nil)
+	req.Host = "pixiecore.example:8443"
+	req.TLS = &tls.ConnectionState{}
+	s.handleIpxe(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Got HTTP %d, want 200", rr.Code)
+	}
+	if got, want := strings.Count(rr.Body.String(), "https://pixiecore.example:8443/_/"), 3; got != want {
+		t.Errorf("script has %d HTTPS URLs, want %d:\n%s", got, want, rr.Body)
+	}
+	if strings.Contains(rr.Body.String(), "http://") {
+		t.Errorf("script has HTTP URLs:\n%s", rr.Body)
+	}
+}
+
+func TestHTTPBaseURL(t *testing.T) {
+	ip := net.ParseIP("192.0.2.1")
+	for _, tc := range []struct {
+		s    *Server
+		want string
+	}{
+		{&Server{HTTPPort: 80}, "http://192.0.2.1:80"},
+		{&Server{HTTPPort: 80, HTTPSPort: 443, TLSConfig: &tls.Config{}}, "https://192.0.2.1:443"},
+		{&Server{HTTPPort: 80, HTTPSPort: 8443, TLSConfig: &tls.Config{}, HTTPHost: "pixiecore.example"}, "https://pixiecore.example:8443"},
+		{&Server{HTTPPort: 8080, HTTPHost: "pixiecore.example"}, "http://pixiecore.example:8080"},
+	} {
+		if got := tc.s.httpBaseURL(ip); got != tc.want {
+			t.Errorf("httpBaseURL = %q, want %q", got, tc.want)
+		}
 	}
 }

@@ -11,8 +11,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -41,6 +43,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/samber/lo"
+	"github.com/wrouesnel/netboot/pixiecore/ipxetrust"
 	"golang.org/x/mod/modfile"
 )
 
@@ -841,6 +844,17 @@ var ipxeTargets = []string{
 	"bin-i386-efi/ipxe.efi",
 }
 
+// ipxeConfigName is the name of Pixiecore's iPXE build configuration. The files
+// in ipxeConfigDir are copied to config/local/<name> in the iPXE source tree.
+const ipxeConfigName = "pixiecore"
+
+// ipxeConfigDir holds Pixiecore's iPXE configuration headers.
+var ipxeConfigDir = path.Join("pixiecore", "ipxe-config")
+
+// ipxeTrustEnv names PEM files of certificates for the embedded iPXE binaries to
+// trust, instead of the iPXE root CA.
+const ipxeTrustEnv = "MAGE_IPXE_TRUST"
+
 // goBindataTool generates out/ipxe/bindata.go. v3.1.3 writes a malformed header,
 // so this stays on v3.1.2.
 const goBindataTool = "github.com/go-bindata/go-bindata/go-bindata@v3.1.2+incompatible"
@@ -850,6 +864,11 @@ const goBindataTool = "github.com/go-bindata/go-bindata/go-bindata@v3.1.2+incomp
 // The submodule is initialized if needed, but an existing checkout is used as is
 // so a different iPXE version can be checked out and built. Building iPXE needs
 // gcc, make, perl and the liblzma headers (liblzma-dev on Debian/Ubuntu).
+//
+// The binaries are built with the configuration in pixiecore/ipxe-config, and a
+// table of trusted TLS root certificates that pixiecore can rewrite in the UEFI
+// binaries (see pixiecore/ipxetrust). The table trusts the iPXE root CA, or the
+// certificates in the comma-separated PEM files in MAGE_IPXE_TRUST.
 func UpdateIpxe() error {
 	ipxeSrcDir := path.Join(ipxeSubmodule, "src")
 	if _, err := os.Stat(path.Join(ipxeSrcDir, "Makefile")); errors.Is(err, os.ErrNotExist) {
@@ -858,11 +877,27 @@ func UpdateIpxe() error {
 		}
 	}
 
+	trustTable, err := ipxeTrustTable(os.Getenv(ipxeTrustEnv))
+	if err != nil {
+		return err
+	}
+	if err := installIpxeConfig(ipxeSrcDir); err != nil {
+		return err
+	}
+
 	// Targets are built one at a time as their builds share, and clean, the
 	// host tools under util/.
 	for _, ipxeTarget := range ipxeTargets {
+		// The trust table is passed on the command line, which iPXE doesn't
+		// track, so always rebuild the object it's compiled into.
+		if err := os.Remove(path.Join(ipxeSrcDir, path.Dir(ipxeTarget), "rootcert.o")); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 		if err := sh.RunV("make", "-C", ipxeSrcDir, "-j", strconv.Itoa(concurrency),
-			"EMBED="+path.Join(curDir, "pixiecore", "boot.ipxe"), ipxeTarget); err != nil {
+			"EMBED="+path.Join(curDir, "pixiecore", "boot.ipxe"),
+			"CONFIG="+ipxeConfigName,
+			"CFLAGS_rootcert=-DTRUSTED="+ipxetrust.CDefine(trustTable),
+			ipxeTarget); err != nil {
 			return err
 		}
 	}
@@ -883,6 +918,78 @@ func UpdateIpxe() error {
 	}
 
 	return Fmt()
+}
+
+// installIpxeConfig copies ipxeConfigDir to the iPXE source tree, replacing any
+// previous copy.
+func installIpxeConfig(ipxeSrcDir string) error {
+	dest := path.Join(ipxeSrcDir, "config", "local", ipxeConfigName)
+	if err := os.RemoveAll(dest); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(ipxeConfigDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		bs, err := os.ReadFile(path.Join(ipxeConfigDir, entry.Name()))
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(path.Join(dest, entry.Name()), bs, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ipxeTrustTable returns the iPXE trust table for the certificates in the
+// comma-separated list of PEM files, or for the iPXE root CA if there are none.
+func ipxeTrustTable(files string) ([]byte, error) {
+	var fingerprints [][ipxetrust.FingerprintLen]byte
+	for _, file := range strings.Split(files, ",") {
+		file = strings.TrimSpace(file)
+		if file == "" {
+			continue
+		}
+		bs, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", ipxeTrustEnv, err)
+		}
+		n := 0
+		for {
+			var block *pem.Block
+			block, bs = pem.Decode(bs)
+			if block == nil {
+				break
+			}
+			if block.Type != "CERTIFICATE" {
+				continue
+			}
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %s: %w", ipxeTrustEnv, file, err)
+			}
+			fingerprints = append(fingerprints, ipxetrust.Fingerprint(cert))
+			n++
+		}
+		if n == 0 {
+			return nil, fmt.Errorf("%s: no certificates found in %s", ipxeTrustEnv, file)
+		}
+	}
+	if len(fingerprints) == 0 {
+		fingerprints = append(fingerprints, ipxetrust.IPXERootCA)
+	} else {
+		fmt.Printf("Building iPXE to trust %d certificate(s) from %s\n", len(fingerprints), ipxeTrustEnv)
+	}
+	table, err := ipxetrust.Table(fingerprints)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", ipxeTrustEnv, err)
+	}
+	return table, nil
 }
 
 // webDir holds any embedded web interface.

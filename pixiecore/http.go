@@ -115,7 +115,11 @@ func (s *Server) handleIpxe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	start = time.Now()
-	script, err := ipxeScript(mach, spec, r.Host)
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	script, err := ipxeScript(mach, spec, scheme+"://"+r.Host)
 	s.debug("HTTP", "Construct ipxe script for %s took %s", mac, time.Since(start))
 	if err != nil {
 		s.log("HTTP", "Failed to assemble ipxe script for %s (query %q from %s): %s", mac, r.URL, r.RemoteAddr, err)
@@ -197,7 +201,23 @@ func (s *Server) handleBooting(w http.ResponseWriter, r *http.Request) {
 	s.machineEvent(mac, machineStateBooted, "Booting into OS")
 }
 
-func ipxeScript(mach Machine, spec *Spec, serverHost string) ([]byte, error) {
+// httpBaseURL returns the URL machines boot from, as reached at
+// serverIP. HTTPS is used when it's enabled.
+func (s *Server) httpBaseURL(serverIP net.IP) string {
+	scheme, port := "http", s.HTTPPort
+	if s.TLSConfig != nil {
+		scheme, port = "https", s.HTTPSPort
+	}
+	host := s.HTTPHost
+	if host == "" {
+		host = serverIP.String()
+	}
+	return fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(host, strconv.Itoa(port)))
+}
+
+// ipxeScript returns the boot script for mach. baseURL is the URL of
+// the boot HTTP server, e.g. "http://192.0.2.1:80".
+func ipxeScript(mach Machine, spec *Spec, baseURL string) ([]byte, error) {
 	if spec.IpxeScript != "" {
 		return []byte(spec.IpxeScript), nil
 	}
@@ -206,7 +226,7 @@ func ipxeScript(mach Machine, spec *Spec, serverHost string) ([]byte, error) {
 		return nil, errors.New("spec is missing Kernel")
 	}
 
-	urlTemplate := fmt.Sprintf("http://%s/_/file?name=%%s&type=%%s&mac=%%s", serverHost)
+	urlTemplate := baseURL + "/_/file?name=%s&type=%s&mac=%s"
 	var b bytes.Buffer
 	b.WriteString("#!ipxe\n")
 	u := fmt.Sprintf(urlTemplate, url.QueryEscape(string(spec.Kernel)), "kernel", url.QueryEscape(mach.MAC.String()))
@@ -216,7 +236,7 @@ func ipxeScript(mach Machine, spec *Spec, serverHost string) ([]byte, error) {
 		fmt.Fprintf(&b, "initrd --name initrd%d %s\n", i, u)
 	}
 
-	fmt.Fprintf(&b, "imgfetch --name ready http://%s/_/booting?mac=%s ||\n", serverHost, url.QueryEscape(mach.MAC.String()))
+	fmt.Fprintf(&b, "imgfetch --name ready %s/_/booting?mac=%s ||\n", baseURL, url.QueryEscape(mach.MAC.String()))
 	b.WriteString("imgfree ready ||\n")
 
 	b.WriteString("boot kernel ")
@@ -225,7 +245,7 @@ func ipxeScript(mach Machine, spec *Spec, serverHost string) ([]byte, error) {
 	}
 
 	f := func(id string) string {
-		return fmt.Sprintf("http://%s/_/file?name=%s", serverHost, url.QueryEscape(id))
+		return fmt.Sprintf("%s/_/file?name=%s", baseURL, url.QueryEscape(id))
 	}
 	cmdline, err := expandCmdline(spec.Cmdline, template.FuncMap{"ID": f})
 	if err != nil {
