@@ -32,9 +32,26 @@ several Pixiecores:
 - `X-Pixiecore-Hostname`: the hostname of the Pixiecore server. By
   default this is the system hostname. Set it with
   `--api-pixiecore-hostname`.
-- `X-Pixiecore-Proxy`: set to `true` if Pixiecore was run with
-  `--api-proxy`, meaning it proxies requests from the subnet it manages
-  to the API server. It's absent otherwise.
+- `X-Pixiecore-Proxy-Port`: the port of Pixiecore's HTTP proxy, if it
+  was run with `--http-proxy` (see [HTTP proxy](#http-proxy)). It's
+  absent otherwise.
+- `X-Pixiecore-Dns`: the address of Pixiecore's DNS forwarder, as
+  `ip:port` (`[ip]:port` for IPv6), if it was run with `--dns` (see
+  [DNS forwarder](#dns-forwarder)). The IP is the same as
+  `X-Pixiecore-IP`. It's absent otherwise.
+- `X-Pixiecore-Http-Port`: the port Pixiecore serves boot files on over
+  HTTP (`--port`). It's absent if HTTP is turned off with
+  `--http-disabled`.
+- `X-Pixiecore-Https-Port`: the port Pixiecore serves boot files on over
+  HTTPS (`--https-port`). It's only sent if HTTPS is enabled with
+  `--http-tls-cert`.
+
+`pixiecore ipv6api` doesn't serve boot files itself, so it sends none
+of the port headers.
+
+You can add your own headers with `--api-header "Name: value"`, which
+can be repeated, e.g. `--api-header "X-Site: syd1"`. Names starting
+with `X-Pixiecore-` are reserved for Pixiecore's headers.
 
 These headers aren't sent to other servers, such as those hosting
 kernels or initrds the API response points to. They're provided by
@@ -193,6 +210,64 @@ reasonable starting point nonetheless. It will instruct pixecore
 to boot Tiny Core Linux' kernel and initrd(s),
 directly from upstream servers.
 
+## HTTP proxy
+
+`pixiecore api --http-proxy` serves an HTTP proxy on `--listen-addr`,
+port `--http-proxy-port` (3128 by default), for example so that machines
+on the subnet Pixiecore manages can reach the API server or package
+mirrors through Pixiecore. Point them at it with e.g.
+`https_proxy=http://<pixiecore>:3128` in the kernel commandline or
+cloud-init config.
+
+- `CONNECT` requests are tunnelled without interception, so HTTPS stays
+  end to end between the machine and the server, and the machine
+  verifies the server's certificate itself.
+- Plain `http://` requests are forwarded. Pixiecore doesn't add its
+  credentials or client certificate to them.
+
+The proxy doesn't authenticate clients or restrict destinations, so
+anything that can reach the port can use it to reach anything
+Pixiecore can. Limit access to the port with a firewall.
+
+## DNS forwarder
+
+`pixiecore api --dns` serves DNS on `--listen-addr`, port `--dns-port`
+(53 by default), over UDP and TCP. Machines can use it, for example, to
+resolve the API server's name to Pixiecore, together with the
+[HTTP proxy](#http-proxy).
+
+- `--dns-upstream` is a server to forward queries to. It can be an IP
+  address with an optional port (`192.0.2.53`, `[2001:db8::53]:5353`),
+  or an `https://` DNS-over-HTTPS URL (`https://1.1.1.1/dns-query`).
+  Repeat it for more servers, which are tried in order when one doesn't
+  respond, or answers SERVFAIL or REFUSED. Without it, the nameservers
+  in `/etc/resolv.conf` are used.
+- `--dns-override name` answers A queries for `name` with Pixiecore's
+  IP address (`X-Pixiecore-IP`), and `--dns-override name=ip` answers
+  with `ip`, as an A or AAAA record. `*.domain` matches every name
+  under `domain`, but not `domain` itself. Repeat it for more names, or
+  more addresses for a name. Overridden names aren't forwarded, so they
+  have no other records.
+
+```shell
+sudo pixiecore api https://api.example/pixiecore \
+    --dns \
+    --dns-upstream https://1.1.1.1/dns-query \
+    --dns-override api.example \
+    --dns-override mirror.example=192.0.2.20
+```
+
+The host names of DNS-over-HTTPS URLs are resolved with the system
+resolver, so if the host running Pixiecore uses Pixiecore for DNS, put
+an IP address in the URL. Answers aren't cached.
+
+On hosts running a local resolver such as systemd-resolved, port 53 may
+already be in use. Set `--listen-addr` to a specific address, or use
+another `--dns-port` if the machines can be told the port.
+
+Like the HTTP proxy, the forwarder answers anyone that can reach it, so
+limit access to the port with a firewall.
+
 ## Securing the API
 
 The API server can be served over HTTPS, and can require Pixiecore to
@@ -207,10 +282,16 @@ authenticate itself. The same flags work for `pixiecore api` and
 - `--api-username user` and `--api-password-file password.txt` send
   HTTP basic auth credentials. The password can also be given in the
   `PIXIECORE_API_PASSWORD` environment variable.
+- `--api-header "Authorization: Bearer <token>"` sends a bearer token,
+  or any other credential header the API server expects. An
+  `Authorization` header can't be combined with `--api-username`. Like
+  basic auth credentials, `--api-header` headers are only sent to the
+  API server, but they're visible in the process list, so prefer
+  client certificates on shared machines.
 - `--api-client-cert cert.pem` and `--api-client-key key.pem` present a
   client certificate for mTLS.
-- `--tpm-enabled` presents a client certificate whose private key is
-  held in the system TPM (see below).
+- `--tpm-enabled --api-client-tpm` presents a client certificate whose
+  private key is held in the system TPM (see below).
 
 Basic auth credentials are only sent to
 the API server itself, meaning URLs with the same scheme, host and port
@@ -227,9 +308,13 @@ API URL.
 
 TPM support is off by default. Pixiecore only reads, creates or uses
 the TPM key and certificate when `--tpm-enabled` is given, and the
-other `--tpm-*` flags are rejected without it.
+other `--tpm-*` flags are rejected without it. `--tpm-enabled` only
+allows TPM use: the client certificate is used with `--api-client-tpm`,
+and a TPM-held key for
+[Secure Boot signing](README.md#keeping-the-signing-key-in-the-tpm) with
+`--secureboot-tpm`. Either can be used without the other.
 
-With `--tpm-enabled`, Pixiecore uses a key generated inside the
+With `--api-client-tpm`, Pixiecore uses a key generated inside the
 system TPM (`/dev/tpmrm0` by default, see `--tpm-device`), so the
 private key can't be copied off the machine. The key is saved as a TSS2
 keyfile in `--tpm-key` (default `/var/lib/pixiecore/tpm-client.key`),
@@ -243,7 +328,7 @@ the API server to trust that certificate:
 ```shell
 sudo pixiecore tpm-cert --tpm-enabled --common-name pxe01 > pxe01.crt
 # e.g. for nginx: ssl_client_certificate pxe01.crt; ssl_verify_client on;
-sudo pixiecore api https://foo.example/pixiecore --tpm-enabled
+sudo pixiecore api https://foo.example/pixiecore --tpm-enabled --api-client-tpm
 ```
 
 Running `pixiecore tpm-cert` again prints the same certificate.

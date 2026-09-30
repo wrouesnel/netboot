@@ -14,7 +14,7 @@ var tpmCertCmd = &cobra.Command{
 	Use:   "tpm-cert",
 	Short: "Print the certificate for the TPM-backed API client key",
 	Long: `Print the certificate Pixiecore presents to API servers when run with
---tpm-enabled, so that the API server can be configured to trust it.
+--api-client-tpm, so that the API server can be configured to trust it.
 This command also requires --tpm-enabled.
 
 The private key is created inside the system TPM and never leaves it. It
@@ -43,7 +43,7 @@ the key.`,
 			fatalf("Error reading flag: %s", err)
 		}
 
-		signer, _ := openTPMKey(cmd)
+		signer, _ := openTPMKey(cmd, "tpm-key", tpmkey.KeyECDSAP256, "pixiecore API client key")
 		certPath := mustGetString(cmd, "tpm-cert")
 
 		if csr {
@@ -78,35 +78,36 @@ the key.`,
 	},
 }
 
-// openTPMKey opens the TPM named by --tpm-device, and loads or creates
-// the key in --tpm-key. The TPM is left open for the life of the
-// process, since the returned signer uses it.
+// openTPMKey opens the TPM named by --tpm-device, and loads the key in
+// the keyfile named by keyFlag, or creates a keyType key with
+// description if it doesn't exist. The TPM is left open for the life of
+// the process, since the returned signer uses it.
 //
 // It is fatal to call this without --tpm-enabled, so the TPM is never
 // touched unless explicitly asked for.
-func openTPMKey(cmd *cobra.Command) (signer crypto.Signer, keyPath string) {
+func openTPMKey(cmd *cobra.Command, keyFlag string, keyType tpmkey.KeyType, description string) (signer crypto.Signer, keyPath string) {
 	enabled, err := tpmEnabled(cmd)
 	if err != nil {
 		fatalf("%s", err)
 	}
 	if !enabled {
-		fatalf("TPM support is disabled, pass --tpm-enabled to use the TPM client key")
+		fatalf("TPM support is disabled, pass --tpm-enabled to use the TPM")
 	}
 
 	device := mustGetString(cmd, "tpm-device")
-	keyPath = mustGetString(cmd, "tpm-key")
+	keyPath = mustGetString(cmd, keyFlag)
 	ownerAuth := []byte(os.Getenv(envTPMOwnerPassword))
 
 	tpm, err := tpmkey.Open(device)
 	if err != nil {
 		fatalf("%s", err)
 	}
-	key, created, err := tpmkey.LoadOrCreateKey(tpm, keyPath, ownerAuth)
+	key, created, err := tpmkey.LoadOrCreateKey(tpm, keyPath, ownerAuth, keyType, description)
 	if err != nil {
 		fatalf("%s", err)
 	}
 	if created {
-		fmt.Fprintf(os.Stderr, "Created TPM client key %q\n", keyPath)
+		fmt.Fprintf(os.Stderr, "Created TPM key %q\n", keyPath)
 	}
 	signer, err = tpmkey.Signer(tpm, key, ownerAuth)
 	if err != nil {

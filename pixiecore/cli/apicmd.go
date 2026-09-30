@@ -37,7 +37,18 @@ HTTPS API servers can be authenticated with --api-ca-cert, and
 Pixiecore can authenticate itself to the API server with HTTP basic
 auth (--api-username), a client certificate (--api-client-cert), or a
 client certificate whose key is held in the system TPM
-(--tpm-enabled, see "pixiecore tpm-cert").`,
+(--tpm-enabled --api-client-tpm, see "pixiecore tpm-cert").
+
+--http-proxy serves an HTTP proxy on --http-proxy-port, e.g. so
+machines on the subnet Pixiecore manages can reach the API server
+through it. CONNECT requests, and so TLS, are tunnelled without being
+intercepted. The port is sent to the API server in the
+` + pixiecore.HeaderPixiecoreProxyPort + ` header.
+
+--dns serves DNS on --dns-port, forwarding queries to --dns-upstream
+servers, which can be DNS-over-HTTPS. --dns-override names are answered
+with Pixiecore's address. The address is sent to the API server in the
+` + pixiecore.HeaderPixiecoreDNS + ` header.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) != 1 {
 			fatalf("you must specify an API URL")
@@ -50,6 +61,13 @@ client certificate whose key is held in the system TPM
 		}
 		s := serverFromFlags(cmd)
 		s.Booter = booter
+		if s.HTTPProxy, err = cmd.Flags().GetBool("http-proxy"); err != nil {
+			fatalf("Error reading flag: %s", err)
+		}
+		if s.HTTPProxyPort, err = cmd.Flags().GetInt("http-proxy-port"); err != nil {
+			fatalf("Error reading flag: %s", err)
+		}
+		dnsFromFlags(cmd, s, server)
 
 		fmt.Println(s.Serve())
 	}}
@@ -58,4 +76,7 @@ func init() {
 	rootCmd.AddCommand(apiCmd)
 	serverConfigFlags(apiCmd)
 	apiClientFlags(apiCmd)
+	apiCmd.Flags().Bool("http-proxy", false, "Serve an HTTP proxy, which tunnels CONNECT requests without intercepting them. The port is sent to the API server in the "+pixiecore.HeaderPixiecoreProxyPort+" header")
+	apiCmd.Flags().Int("http-proxy-port", 3128, "Port to listen on for the HTTP proxy, with --http-proxy")
+	dnsFlags(apiCmd)
 }

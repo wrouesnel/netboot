@@ -3,11 +3,13 @@ package cli
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,20 +34,31 @@ func apiClientFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("api-insecure", false, "Don't verify the TLS certificates of HTTPS API servers. Insecure, for testing only")
 	cmd.Flags().String("api-client-cert", "", "PEM certificate to present to the API server for mTLS")
 	cmd.Flags().String("api-client-key", "", "PEM private key for --api-client-cert")
+	cmd.Flags().Bool("api-client-tpm", false, "Present a client certificate whose key is held in the TPM (--tpm-key, --tpm-cert) to the API server for mTLS. Requires --tpm-enabled")
 	cmd.Flags().String("api-username", "", "Username for HTTP basic auth to the API server")
 	cmd.Flags().String("api-password-file", "", "File containing the password for HTTP basic auth to the API server (or set "+envAPIPassword+")")
 	cmd.Flags().String("api-pixiecore-ip", "", "IP address sent to the API server in the "+pixiecore.HeaderPixiecoreIP+" header (default: --listen-addr if set, else the local address used to reach the API server)")
-	cmd.Flags().Bool("api-proxy", false, "Tell the API server, with the "+pixiecore.HeaderPixiecoreProxy+" header, that Pixiecore proxies requests from the subnet it manages to the API server")
+	cmd.Flags().StringArray("api-header", nil, "Extra header to send to the API server, as \"Name: value\". Can be repeated")
 	cmd.Flags().String("api-pixiecore-hostname", "", "Hostname sent to the API server in the "+pixiecore.HeaderPixiecoreHostname+" header (default: the system hostname)")
 	tpmFlags(cmd)
 }
 
-// tpmFlags adds the flags that enable and locate the TPM client key.
+// tpmFlags adds the flags that enable the TPM and locate the TPM client
+// key.
 func tpmFlags(cmd *cobra.Command) {
-	cmd.Flags().Bool("tpm-enabled", false, "Use the TPM-resident client key and certificate. Nothing is read from or created in the TPM without this")
-	cmd.Flags().String("tpm-device", tpmkey.DefaultDevice, "TPM device, or unix socket of a TPM simulator")
+	tpmDeviceFlags(cmd)
 	cmd.Flags().String("tpm-key", defaultTPMKey, "TSS2 keyfile for the TPM client key, created if it doesn't exist")
 	cmd.Flags().String("tpm-cert", defaultTPMCert, "Certificate for the TPM client key, created (self-signed) if it doesn't exist")
+}
+
+// tpmDeviceFlags adds the flags that enable and locate the TPM, unless
+// cmd already has them.
+func tpmDeviceFlags(cmd *cobra.Command) {
+	if cmd.Flags().Lookup("tpm-enabled") != nil {
+		return
+	}
+	cmd.Flags().Bool("tpm-enabled", false, "Allow Pixiecore to use the TPM, for --api-client-tpm and --secureboot-tpm. Nothing is read from or created in the TPM without this")
+	cmd.Flags().String("tpm-device", tpmkey.DefaultDevice, "TPM device, or unix socket of a TPM simulator")
 }
 
 // apiClientFromFlags builds the HTTP client for the API server at
@@ -63,7 +76,7 @@ func apiClientFromFlags(cmd *cobra.Command, apiURL string) *http.Client {
 	}
 	clientCert := mustGetString(cmd, "api-client-cert")
 	clientKey := mustGetString(cmd, "api-client-key")
-	useTPM, err := tpmEnabled(cmd)
+	useTPM, err := apiClientTPM(cmd)
 	if err != nil {
 		fatalf("%s", err)
 	}
@@ -83,7 +96,7 @@ func apiClientFromFlags(cmd *cobra.Command, apiURL string) *http.Client {
 
 	switch {
 	case useTPM && (clientCert != "" || clientKey != ""):
-		fatalf("--tpm-enabled can't be used with --api-client-cert/--api-client-key")
+		fatalf("--api-client-tpm can't be used with --api-client-cert/--api-client-key")
 	case useTPM:
 		cfg.ClientCertificate = tpmCertificateFromFlags(cmd)
 	case clientCert != "" || clientKey != "":
@@ -110,8 +123,14 @@ func apiClientFromFlags(cmd *cobra.Command, apiURL string) *http.Client {
 	if cfg.Header, err = identityHeaders(cmd, apiURL); err != nil {
 		fatalf("%s", err)
 	}
+	if err := customHeaders(cmd, cfg.Header); err != nil {
+		fatalf("%s", err)
+	}
+	if cfg.Username != "" && cfg.Header.Get("Authorization") != "" {
+		fatalf("--api-username can't be used with an Authorization --api-header")
+	}
 
-	if u, err := url.Parse(apiURL); err == nil && u.Scheme == "http" && (cfg.Username != "" || cfg.ClientCertificate != nil) {
+	if u, err := url.Parse(apiURL); err == nil && u.Scheme == "http" && (cfg.Username != "" || cfg.ClientCertificate != nil || cfg.Header.Get("Authorization") != "") {
 		fmt.Fprintf(os.Stderr, "WARNING: API URL %q is not https, credentials will be sent in the clear\n", apiURL)
 	}
 	if cfg.InsecureSkipVerify {
@@ -129,29 +148,11 @@ func apiClientFromFlags(cmd *cobra.Command, apiURL string) *http.Client {
 // Pixiecore instance a request came from. Values not set by flags are
 // detected.
 func identityHeaders(cmd *cobra.Command, apiURL string) (http.Header, error) {
-	ip := mustGetString(cmd, "api-pixiecore-ip")
-	hostname := mustGetString(cmd, "api-pixiecore-hostname")
-
-	if ip != "" {
-		if net.ParseIP(ip) == nil {
-			return nil, fmt.Errorf("--api-pixiecore-ip %q is not an IP address", ip)
-		}
-	} else {
-		// Prefer the address Pixiecore is serving on, since that's
-		// the address machines will boot from.
-		if f := cmd.Flags().Lookup("listen-addr"); f != nil {
-			if addr := net.ParseIP(f.Value.String()); addr != nil && !addr.IsUnspecified() {
-				ip = addr.String()
-			}
-		}
-		if ip == "" {
-			addr, err := pixiecore.DetectLocalIP(apiURL)
-			if err != nil {
-				return nil, fmt.Errorf("couldn't detect the local IP address for the API server, set --api-pixiecore-ip: %w", err)
-			}
-			ip = addr.String()
-		}
+	ip, err := pixiecoreIP(cmd, apiURL)
+	if err != nil {
+		return nil, err
 	}
+	hostname := mustGetString(cmd, "api-pixiecore-hostname")
 
 	if hostname == "" {
 		var err error
@@ -161,22 +162,120 @@ func identityHeaders(cmd *cobra.Command, apiURL string) (http.Header, error) {
 	}
 
 	h := http.Header{}
-	h.Set(pixiecore.HeaderPixiecoreIP, ip)
+	h.Set(pixiecore.HeaderPixiecoreIP, ip.String())
 	h.Set(pixiecore.HeaderPixiecoreHostname, hostname)
-	proxy, err := cmd.Flags().GetBool("api-proxy")
-	if err != nil {
-		return nil, fmt.Errorf("error reading flag: %w", err)
+	// Commands without Pixiecore's server (ipv6api) don't have these
+	// flags, and send no ports.
+	if cmd.Flags().Lookup("dns") != nil {
+		enabled, err := cmd.Flags().GetBool("dns")
+		if err != nil {
+			return nil, fmt.Errorf("error reading flag: %w", err)
+		}
+		port, err := cmd.Flags().GetInt("dns-port")
+		if err != nil {
+			return nil, fmt.Errorf("error reading flag: %w", err)
+		}
+		if enabled {
+			h.Set(pixiecore.HeaderPixiecoreDNS, net.JoinHostPort(ip.String(), strconv.Itoa(port)))
+		}
 	}
-	if proxy {
-		h.Set(pixiecore.HeaderPixiecoreProxy, "true")
+	if cmd.Flags().Lookup("http-proxy") != nil {
+		proxy, err := cmd.Flags().GetBool("http-proxy")
+		if err != nil {
+			return nil, fmt.Errorf("error reading flag: %w", err)
+		}
+		port, err := cmd.Flags().GetInt("http-proxy-port")
+		if err != nil {
+			return nil, fmt.Errorf("error reading flag: %w", err)
+		}
+		if proxy {
+			h.Set(pixiecore.HeaderPixiecoreProxyPort, strconv.Itoa(port))
+		}
+	}
+	if f := cmd.Flags().Lookup("port"); f != nil {
+		disabled, err := cmd.Flags().GetBool("http-disabled")
+		if err != nil {
+			return nil, fmt.Errorf("error reading flag: %w", err)
+		}
+		if !disabled {
+			h.Set(pixiecore.HeaderPixiecoreHTTPPort, f.Value.String())
+		}
+	}
+	if f := cmd.Flags().Lookup("https-port"); f != nil && mustGetString(cmd, "http-tls-cert") != "" {
+		h.Set(pixiecore.HeaderPixiecoreHTTPSPort, f.Value.String())
 	}
 	return h, nil
+}
+
+// pixiecoreIP returns Pixiecore's IP address, as sent to the API
+// server: --api-pixiecore-ip, else --listen-addr if it's a specific
+// address, else the local address used to reach apiURL.
+func pixiecoreIP(cmd *cobra.Command, apiURL string) (net.IP, error) {
+	if s := mustGetString(cmd, "api-pixiecore-ip"); s != "" {
+		ip := net.ParseIP(s)
+		if ip == nil {
+			return nil, fmt.Errorf("--api-pixiecore-ip %q is not an IP address", s)
+		}
+		return ip, nil
+	}
+	// Prefer the address Pixiecore is serving on, since that's the
+	// address machines will boot from.
+	if f := cmd.Flags().Lookup("listen-addr"); f != nil {
+		if ip := net.ParseIP(f.Value.String()); ip != nil && !ip.IsUnspecified() {
+			return ip, nil
+		}
+	}
+	ip, err := pixiecore.DetectLocalIP(apiURL)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't detect the local IP address for the API server, set --api-pixiecore-ip: %w", err)
+	}
+	return ip, nil
+}
+
+// customHeaders adds the --api-header headers to h.
+func customHeaders(cmd *cobra.Command, h http.Header) error {
+	headers, err := cmd.Flags().GetStringArray("api-header")
+	if err != nil {
+		return fmt.Errorf("error reading flag: %w", err)
+	}
+	for _, header := range headers {
+		name, value, ok := strings.Cut(header, ":")
+		if !ok || !validHeaderName(name) {
+			return fmt.Errorf("--api-header %q isn't of the form \"Name: value\"", header)
+		}
+		value = strings.TrimSpace(value)
+		if strings.ContainsAny(value, "\r\n\x00") {
+			return fmt.Errorf("--api-header %q: the value can't contain line breaks", header)
+		}
+		name = http.CanonicalHeaderKey(name)
+		if strings.HasPrefix(name, "X-Pixiecore-") || name == "Host" {
+			return fmt.Errorf("--api-header %q: %s is set by Pixiecore", header, name)
+		}
+		h.Add(name, value)
+	}
+	return nil
+}
+
+// validHeaderName reports whether name is an HTTP token (RFC 9110).
+func validHeaderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, c := range []byte(name) {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case strings.IndexByte("!#$%&'*+-.^_`|~", c) >= 0:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // tpmCertificateFromFlags loads (or creates) the TPM client key and
 // certificate.
 func tpmCertificateFromFlags(cmd *cobra.Command) *tls.Certificate {
-	signer, keyPath := openTPMKey(cmd)
+	signer, keyPath := openTPMKey(cmd, "tpm-key", tpmkey.KeyECDSAP256, "pixiecore API client key")
 	certPath := mustGetString(cmd, "tpm-cert")
 
 	cert, created, err := tpmkey.LoadOrCreateCertificate(signer, certPath, tpmkey.CertificateOptions{})
@@ -191,6 +290,31 @@ func tpmCertificateFromFlags(cmd *cobra.Command) *tls.Certificate {
 		fatalf("TPM client certificate %q: %s (run \"pixiecore tpm-cert --renew\" to issue a new one)", certPath, err)
 	}
 	return tlsCert
+}
+
+// apiClientTPM reports whether --api-client-tpm is set, checking that
+// the TPM is enabled for it, and that the TPM client key flags aren't
+// set without it.
+func apiClientTPM(cmd *cobra.Command) (bool, error) {
+	enabled, err := tpmEnabled(cmd)
+	if err != nil {
+		return false, err
+	}
+	useTPM, err := cmd.Flags().GetBool("api-client-tpm")
+	if err != nil {
+		return false, fmt.Errorf("error reading flag: %w", err)
+	}
+	if useTPM && !enabled {
+		return false, errors.New("--api-client-tpm requires --tpm-enabled")
+	}
+	if !useTPM {
+		for _, name := range []string{"tpm-key", "tpm-cert"} {
+			if cmd.Flags().Changed(name) {
+				return false, fmt.Errorf("--%s requires --api-client-tpm", name)
+			}
+		}
+	}
+	return useTPM, nil
 }
 
 // tpmOptionFlags are the flags that only make sense with --tpm-enabled.

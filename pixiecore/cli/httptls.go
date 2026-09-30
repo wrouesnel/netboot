@@ -23,6 +23,14 @@ var firmwareNames = map[pixiecore.Firmware]string{
 	pixiecore.FirmwareX86Ipxe: "iPXE chainload",
 }
 
+// firmwareName returns the name of fwtype for messages.
+func firmwareName(fwtype pixiecore.Firmware) string {
+	if name := firmwareNames[fwtype]; name != "" {
+		return name
+	}
+	return fmt.Sprintf("firmware %d", fwtype)
+}
+
 func httpTLSFlags(cmd *cobra.Command) {
 	cmd.Flags().String("http-tls-cert", "", "PEM certificate chain to serve boot files over HTTPS with on --https-port, and boot machines over HTTPS. The last certificate in the file is trusted by the iPXE binaries")
 	cmd.Flags().String("http-tls-key", "", "PEM private key for --http-tls-cert")
@@ -150,10 +158,7 @@ func trustIpxe(ipxe map[pixiecore.Firmware][]byte, certs []*x509.Certificate) (m
 	ret := make(map[pixiecore.Firmware][]byte, len(ipxe))
 	var warnings []string
 	for _, fwtype := range fwtypes {
-		name := firmwareNames[fwtype]
-		if name == "" {
-			name = fmt.Sprintf("firmware %d", fwtype)
-		}
+		name := firmwareName(fwtype)
 		bs, err := ipxetrust.Patch(ipxe[fwtype], fingerprints)
 		switch {
 		case errors.Is(err, ipxetrust.ErrNoTable):

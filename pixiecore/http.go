@@ -16,6 +16,7 @@ package pixiecore
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -119,7 +120,7 @@ func (s *Server) handleIpxe(w http.ResponseWriter, r *http.Request) {
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	script, err := ipxeScript(mach, spec, scheme+"://"+r.Host)
+	script, err := s.ipxeScript(mach, spec, scheme+"://"+r.Host)
 	s.debug("HTTP", "Construct ipxe script for %s took %s", mac, time.Since(start))
 	if err != nil {
 		s.log("HTTP", "Failed to assemble ipxe script for %s (query %q from %s): %s", mac, r.URL, r.RemoteAddr, err)
@@ -144,6 +145,7 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		s.debug("HTTP", "Bad request %q from %s, missing filename", r.URL, r.RemoteAddr)
 		http.Error(w, "missing filename", http.StatusBadRequest)
+		return
 	}
 
 	f, sz, err := s.Booter.ReadBootFile(ID(name))
@@ -153,12 +155,20 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
+	var body io.Reader = f
+	if s.SecureBootSigner != nil && r.URL.Query().Get("type") == "kernel" {
+		if hmac.Equal([]byte(r.URL.Query().Get("ksig")), []byte(s.kernelToken(ID(name)))) {
+			body, sz = s.signKernel(ID(name), f, sz)
+		} else {
+			s.debug("HTTP", "Not signing kernel %q for %s, the request isn't from a boot script", name, r.RemoteAddr)
+		}
+	}
 	if sz >= 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(sz, 10))
 	} else {
 		s.log("HTTP", "Unknown file size for %q, boot will be VERY slow (can your Booter provide file sizes?)", name)
 	}
-	if _, err = io.Copy(w, f); err != nil {
+	if _, err = io.Copy(w, body); err != nil {
 		s.log("HTTP", "Copy of %q to %s (query %q) failed: %s", name, r.RemoteAddr, r.URL, err)
 		return
 	}
@@ -217,7 +227,7 @@ func (s *Server) httpBaseURL(serverIP net.IP) string {
 
 // ipxeScript returns the boot script for mach. baseURL is the URL of
 // the boot HTTP server, e.g. "http://192.0.2.1:80".
-func ipxeScript(mach Machine, spec *Spec, baseURL string) ([]byte, error) {
+func (s *Server) ipxeScript(mach Machine, spec *Spec, baseURL string) ([]byte, error) {
 	if spec.IpxeScript != "" {
 		return []byte(spec.IpxeScript), nil
 	}
@@ -230,6 +240,9 @@ func ipxeScript(mach Machine, spec *Spec, baseURL string) ([]byte, error) {
 	var b bytes.Buffer
 	b.WriteString("#!ipxe\n")
 	u := fmt.Sprintf(urlTemplate, url.QueryEscape(string(spec.Kernel)), "kernel", url.QueryEscape(mach.MAC.String()))
+	if s.SecureBootSigner != nil {
+		u += "&ksig=" + s.kernelToken(spec.Kernel)
+	}
 	fmt.Fprintf(&b, "kernel --name kernel %s\n", u)
 	for i, initrd := range spec.Initrd {
 		u = fmt.Sprintf(urlTemplate, url.QueryEscape(string(initrd)), "initrd", url.QueryEscape(mach.MAC.String()))

@@ -21,16 +21,21 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
 
+	"github.com/miekg/dns"
 	"github.com/wrouesnel/netboot/dhcp4"
+	"github.com/wrouesnel/netboot/pixiecore/dnsforward"
+	"github.com/wrouesnel/netboot/pixiecore/uefisign"
 
 	"github.com/wrouesnel/netboot/version"
 )
 
 const (
+	portDNS   = 53
 	portDHCP  = 67
 	portTFTP  = 69
 	portHTTP  = 80
@@ -182,9 +187,33 @@ type Server struct {
 	// address.
 	HTTPHost string
 
+	// HTTPProxy serves a forward HTTP proxy on HTTPProxyPort, e.g. so
+	// machines on the subnet Pixiecore manages can reach the API server
+	// or package mirrors through it. It tunnels CONNECT requests without
+	// intercepting them, and forwards plain HTTP requests. Anything
+	// that can reach the port can use it.
+	HTTPProxy bool
+	// HTTPProxyPort is the port for HTTPProxy, 3128 by default.
+	HTTPProxyPort int
+
+	// DNSForwarder, if set, serves DNS on DNSPort over UDP and TCP,
+	// answering overridden names itself and forwarding other queries.
+	// Anything that can reach the port can use it. Its Log and Debug
+	// default to Pixiecore's.
+	DNSForwarder *dnsforward.Forwarder
+	// DNSPort is the port for DNSForwarder, 53 by default.
+	DNSPort int
+
 	// Ipxe lists the supported bootable Firmwares, and their
 	// associated ipxe binary.
 	Ipxe map[Firmware][]byte
+
+	// SecureBootSigner, if set, signs the kernels in boot specs for
+	// UEFI Secure Boot as they're served. Kernels that aren't UEFI
+	// images (built without an EFI stub) are served unsigned. Kernels
+	// in raw IpxeScripts aren't signed. The iPXE binaries in Ipxe must
+	// be signed separately.
+	SecureBootSigner *uefisign.Signer
 
 	// Log receives logs on Pixiecore's operation. If nil, logging
 	// is suppressed.
@@ -214,6 +243,11 @@ type Server struct {
 
 	eventsMu sync.Mutex
 	events   map[string][]machineEvent
+
+	// kernelKey authenticates the kernel URLs in boot scripts, see
+	// kernelToken.
+	kernelKeyOnce sync.Once
+	kernelKey     []byte
 }
 
 // Serve listens for machines attempting to boot, and uses Booter to
@@ -236,6 +270,12 @@ func (s *Server) Serve() error {
 	}
 	if s.DisableHTTP && s.TLSConfig == nil {
 		return errors.New("HTTP is disabled and HTTPS isn't enabled, one must be enabled to boot machines")
+	}
+	if s.HTTPProxyPort == 0 {
+		s.HTTPProxyPort = portHTTPProxy
+	}
+	if s.DNSPort == 0 {
+		s.DNSPort = portDNS
 	}
 
 	newDHCP := dhcp4.NewConn
@@ -286,14 +326,62 @@ func (s *Server) Serve() error {
 		}
 		httpListeners = append(httpListeners, tls.NewListener(l, s.TLSConfig))
 	}
+	var httpProxy net.Listener
+	if s.HTTPProxy {
+		httpProxy, err = net.Listen("tcp", fmt.Sprintf("%s:%d", s.Address, s.HTTPProxyPort))
+		if err != nil {
+			dhcp.Close()
+			tftp.Close()
+			pxe.Close()
+			closeHTTP()
+			return err
+		}
+	}
+	var dnsServers []*dns.Server
+	closeDNS := func() {
+		for _, srv := range dnsServers {
+			if srv.PacketConn != nil {
+				srv.PacketConn.Close()
+			} else {
+				srv.Listener.Close()
+			}
+		}
+	}
+	if s.DNSForwarder != nil {
+		dnsAddr := net.JoinHostPort(s.Address, strconv.Itoa(s.DNSPort))
+		udp, err := net.ListenPacket("udp", dnsAddr)
+		if err == nil {
+			dnsServers = append(dnsServers, &dns.Server{PacketConn: udp, Handler: s.DNSForwarder})
+			var tcp net.Listener
+			if tcp, err = net.Listen("tcp", dnsAddr); err == nil {
+				dnsServers = append(dnsServers, &dns.Server{Listener: tcp, Handler: s.DNSForwarder})
+			}
+		}
+		if err != nil {
+			dhcp.Close()
+			tftp.Close()
+			pxe.Close()
+			closeHTTP()
+			if httpProxy != nil {
+				httpProxy.Close()
+			}
+			closeDNS()
+			return err
+		}
+		if s.DNSForwarder.Log == nil {
+			s.DNSForwarder.Log = func(format string, args ...any) { s.log("DNS", format, args...) }
+		}
+		if s.DNSForwarder.Debug == nil {
+			s.DNSForwarder.Debug = func(format string, args ...any) { s.debug("DNS", format, args...) }
+		}
+	}
 
 	s.events = make(map[string][]machineEvent)
-	// 6 buffer slots, one for each goroutine, plus one for
-	// Shutdown(). We only ever pull the first error out, but shutdown
-	// will likely generate some spurious errors from the other
-	// goroutines, and we want them to be able to dump them without
-	// blocking.
-	s.errs = make(chan error, 6)
+	// One buffer slot for each goroutine, plus one for Shutdown(). We
+	// only ever pull the first error out, but shutdown will likely
+	// generate some spurious errors from the other goroutines, and we
+	// want them to be able to dump them without blocking.
+	s.errs = make(chan error, 3+len(httpListeners)+1+len(dnsServers)+1)
 
 	s.log("Init", "Starting Pixiecore %s", version.Version)
 	s.debug("Init", "Starting Pixiecore goroutines")
@@ -304,6 +392,22 @@ func (s *Server) Serve() error {
 	for _, l := range httpListeners {
 		go func() { s.errs <- serveHTTP(l, s.serveHTTP) }()
 	}
+	if httpProxy != nil {
+		s.log("Init", "Serving an HTTP proxy on %s", httpProxy.Addr())
+		go func() { s.errs <- s.serveHTTPProxy(httpProxy) }()
+	}
+	if len(dnsServers) > 0 {
+		s.log("Init", "Serving DNS on %s, forwarding to %s", dnsServers[0].PacketConn.LocalAddr(), s.DNSForwarder.Upstreams)
+	}
+	for _, srv := range dnsServers {
+		go func() {
+			if err := srv.ActivateAndServe(); err != nil {
+				s.errs <- fmt.Errorf("DNS server shut down: %s", err)
+			} else {
+				s.errs <- errors.New("DNS server shut down")
+			}
+		}()
+	}
 
 	// Wait for either a fatal error, or Shutdown().
 	err = <-s.errs
@@ -311,6 +415,10 @@ func (s *Server) Serve() error {
 	tftp.Close()
 	pxe.Close()
 	closeHTTP()
+	if httpProxy != nil {
+		httpProxy.Close()
+	}
+	closeDNS()
 	return err
 }
 

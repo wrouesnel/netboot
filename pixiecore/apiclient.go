@@ -16,9 +16,18 @@ import (
 const (
 	HeaderPixiecoreIP       = "X-Pixiecore-IP"
 	HeaderPixiecoreHostname = "X-Pixiecore-Hostname"
-	// HeaderPixiecoreProxy is set to "true" when Pixiecore proxies
-	// requests from the subnet it manages to the API server.
-	HeaderPixiecoreProxy = "X-Pixiecore-Proxy"
+	// HeaderPixiecoreProxyPort is the port of Pixiecore's HTTP proxy,
+	// if it runs one (see Server.HTTPProxy).
+	HeaderPixiecoreProxyPort = "X-Pixiecore-Proxy-Port"
+	// HeaderPixiecoreHTTPPort and HeaderPixiecoreHTTPSPort are the
+	// ports Pixiecore serves boot files on over HTTP and HTTPS. Each is
+	// only set if Pixiecore listens on it.
+	HeaderPixiecoreHTTPPort  = "X-Pixiecore-Http-Port"
+	HeaderPixiecoreHTTPSPort = "X-Pixiecore-Https-Port"
+	// HeaderPixiecoreDNS is the IP address and port ("ip:port") of
+	// Pixiecore's DNS forwarder, if it runs one (see
+	// Server.DNSForwarder).
+	HeaderPixiecoreDNS = "X-Pixiecore-Dns"
 )
 
 // APIClientConfig configures the HTTP client used to talk to a

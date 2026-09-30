@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -124,6 +125,36 @@ func TestTPMEnabled(t *testing.T) {
 	}
 }
 
+func TestAPIClientTPM(t *testing.T) {
+	cases := []struct {
+		args    []string
+		want    bool
+		wantErr bool
+	}{
+		{args: nil, want: false},
+		// The TPM can be enabled for other uses, e.g. Secure Boot
+		// signing, without presenting the TPM client certificate.
+		{args: []string{"--tpm-enabled"}, want: false},
+		{args: []string{"--tpm-enabled", "--api-client-tpm"}, want: true},
+		{args: []string{"--tpm-enabled", "--api-client-tpm", "--tpm-key", "/k", "--tpm-cert", "/c"}, want: true},
+		{args: []string{"--api-client-tpm"}, wantErr: true},
+		{args: []string{"--tpm-enabled", "--tpm-key", "/k"}, wantErr: true},
+		{args: []string{"--tpm-enabled", "--tpm-cert", "/c"}, wantErr: true},
+	}
+	for _, tc := range cases {
+		cmd := &cobra.Command{}
+		serverConfigFlags(cmd)
+		apiClientFlags(cmd)
+		if err := cmd.ParseFlags(tc.args); err != nil {
+			t.Fatal(err)
+		}
+		got, err := apiClientTPM(cmd)
+		if (err != nil) != tc.wantErr || got != tc.want {
+			t.Errorf("apiClientTPM(%q) = %v, %v; want %v, error=%v", tc.args, got, err, tc.want, tc.wantErr)
+		}
+	}
+}
+
 func TestIdentityHeaders(t *testing.T) {
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -133,7 +164,6 @@ func TestIdentityHeaders(t *testing.T) {
 		args         []string
 		wantIP       string
 		wantHostname string
-		wantProxy    string
 		wantErr      bool
 	}{
 		// The loopback API server is reached from the loopback address.
@@ -145,7 +175,6 @@ func TestIdentityHeaders(t *testing.T) {
 			wantIP:       "2001:db8::1",
 			wantHostname: "pxe1",
 		},
-		{args: []string{"--api-proxy"}, wantIP: "127.0.0.1", wantHostname: hostname, wantProxy: "true"},
 		{args: []string{"--api-pixiecore-ip", "not-an-ip"}, wantErr: true},
 	}
 	for _, tc := range cases {
@@ -171,8 +200,114 @@ func TestIdentityHeaders(t *testing.T) {
 		if got := h.Get(pixiecore.HeaderPixiecoreHostname); got != tc.wantHostname {
 			t.Errorf("identityHeaders(%q): hostname %q, want %q", tc.args, got, tc.wantHostname)
 		}
-		if got := h.Get(pixiecore.HeaderPixiecoreProxy); got != tc.wantProxy {
-			t.Errorf("identityHeaders(%q): proxy %q, want %q", tc.args, got, tc.wantProxy)
+		// Without Pixiecore's server flags, no ports are sent.
+		for _, name := range []string{pixiecore.HeaderPixiecoreHTTPPort, pixiecore.HeaderPixiecoreHTTPSPort, pixiecore.HeaderPixiecoreProxyPort, pixiecore.HeaderPixiecoreDNS} {
+			if _, ok := h[name]; ok {
+				t.Errorf("identityHeaders(%q): unexpected %s header", tc.args, name)
+			}
+		}
+	}
+}
+
+func TestIdentityHeadersPorts(t *testing.T) {
+	cases := []struct {
+		args          []string
+		wantHTTPPort  string
+		wantHTTPSPort string
+		wantProxyPort string
+		wantDNS       string
+		wantErr       bool
+	}{
+		{args: []string{"--http-proxy"}, wantHTTPPort: "80", wantProxyPort: "3128"},
+		{args: []string{"--http-proxy", "--http-proxy-port", "8081"}, wantHTTPPort: "80", wantProxyPort: "8081"},
+		{args: []string{"--http-proxy-port", "8081"}, wantHTTPPort: "80"},
+		{args: []string{"--dns"}, wantHTTPPort: "80", wantDNS: "192.0.2.1:53"},
+		{args: []string{"--dns", "--dns-port", "5353"}, wantHTTPPort: "80", wantDNS: "192.0.2.1:5353"},
+		{args: []string{"--dns", "--api-pixiecore-ip", "2001:db8::1"}, wantHTTPPort: "80", wantDNS: "[2001:db8::1]:53"},
+		{args: nil, wantHTTPPort: "80"},
+		{args: []string{"--port", "8080"}, wantHTTPPort: "8080"},
+		{args: []string{"--http-tls-cert", "server.crt"}, wantHTTPPort: "80", wantHTTPSPort: "443"},
+		{args: []string{"--port", "8080", "--http-tls-cert", "server.crt", "--https-port", "8443"}, wantHTTPPort: "8080", wantHTTPSPort: "8443"},
+		{args: []string{"--http-tls-cert", "server.crt", "--https-port", "8443", "--http-disabled"}, wantHTTPSPort: "8443"},
+	}
+	for _, tc := range cases {
+		cmd := &cobra.Command{}
+		serverConfigFlags(cmd)
+		apiClientFlags(cmd)
+		cmd.Flags().Bool("http-proxy", false, "")
+		cmd.Flags().Int("http-proxy-port", 3128, "")
+		dnsFlags(cmd)
+		if err := cmd.ParseFlags(append([]string{"--api-pixiecore-ip", "192.0.2.1"}, tc.args...)); err != nil {
+			t.Fatal(err)
+		}
+		h, err := identityHeaders(cmd, "http://127.0.0.1:8080")
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("identityHeaders(%q): want error", tc.args)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("identityHeaders(%q): %s", tc.args, err)
+		}
+		for name, want := range map[string]string{
+			pixiecore.HeaderPixiecoreHTTPPort:  tc.wantHTTPPort,
+			pixiecore.HeaderPixiecoreHTTPSPort: tc.wantHTTPSPort,
+			pixiecore.HeaderPixiecoreProxyPort: tc.wantProxyPort,
+			pixiecore.HeaderPixiecoreDNS:       tc.wantDNS,
+		} {
+			got, ok := h[http.CanonicalHeaderKey(name)]
+			if want == "" {
+				if ok {
+					t.Errorf("identityHeaders(%q): %s is %q, want it absent", tc.args, name, got)
+				}
+			} else if !ok || len(got) != 1 || got[0] != want {
+				t.Errorf("identityHeaders(%q): %s is %q, want %q", tc.args, name, got, want)
+			}
+		}
+	}
+}
+
+func TestCustomHeaders(t *testing.T) {
+	cases := []struct {
+		args    []string
+		want    http.Header
+		wantErr bool
+	}{
+		{args: nil, want: http.Header{}},
+		{
+			args: []string{"--api-header", "X-Site: syd1", "--api-header", "authorization:Bearer abc"},
+			want: http.Header{"X-Site": {"syd1"}, "Authorization": {"Bearer abc"}},
+		},
+		// Values can have commas and colons, and names can repeat.
+		{
+			args: []string{"--api-header", "X-Tags: a, b", "--api-header", "X-Tags: c:d", "--api-header", "X-Empty:"},
+			want: http.Header{"X-Tags": {"a, b", "c:d"}, "X-Empty": {""}},
+		},
+		{args: []string{"--api-header", "X-Site"}, wantErr: true},
+		{args: []string{"--api-header", ": value"}, wantErr: true},
+		{args: []string{"--api-header", "X Site: syd1"}, wantErr: true},
+		{args: []string{"--api-header", "X-Site: a\r\nX-Other: b"}, wantErr: true},
+		{args: []string{"--api-header", "X-Pixiecore-IP: 192.0.2.1"}, wantErr: true},
+		{args: []string{"--api-header", "x-pixiecore-proxy-port: 1"}, wantErr: true},
+		{args: []string{"--api-header", "Host: example"}, wantErr: true},
+	}
+	for _, tc := range cases {
+		cmd := &cobra.Command{}
+		apiClientFlags(cmd)
+		if err := cmd.ParseFlags(tc.args); err != nil {
+			t.Fatal(err)
+		}
+		h := http.Header{}
+		err := customHeaders(cmd, h)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("customHeaders(%q) = %v, want error", tc.args, h)
+			}
+			continue
+		}
+		if err != nil || !reflect.DeepEqual(h, tc.want) {
+			t.Errorf("customHeaders(%q) = %v, %v; want %v", tc.args, h, err, tc.want)
 		}
 	}
 }

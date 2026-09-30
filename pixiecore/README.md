@@ -190,7 +190,71 @@ config Pixiecore builds with is in [ipxe-config](ipxe-config), which
 enables HTTPS for BIOS builds.
 
 HTTPS protects the boot after iPXE starts. iPXE itself is still loaded
-over TFTP without any authentication.
+over TFTP without any authentication, unless the machines use UEFI
+Secure Boot (see below).
+
+## Signing for UEFI Secure Boot
+
+Pixiecore can sign the UEFI iPXE binaries and the kernels it serves, so
+that machines with Secure Boot enabled boot them. Put a CA certificate
+in the machines' Secure Boot `db` (or put the signing certificate
+there directly), and give Pixiecore an RSA key with a certificate
+issued by that CA:
+
+```shell
+sudo pixiecore boot kernel initrd \
+    --secureboot-key /etc/pixiecore/secureboot.key \
+    --secureboot-cert /etc/pixiecore/secureboot-chain.pem
+```
+
+`--secureboot-cert` is the signing certificate, followed by any
+intermediate certificates between it and the certificate in `db`, which
+are embedded in the signatures. The key must be RSA (2048 bits is the
+safe choice), because most firmware only verifies RSA signatures.
+
+The UEFI iPXE binaries are signed when Pixiecore starts, after they're
+changed to trust the HTTPS certificates. Kernels are signed as they're
+served, and the last few signed kernels are kept in memory. Only the
+kernel of a boot spec is signed, not other files Pixiecore serves.
+Kernels that are already signed, e.g. by a Linux distribution, keep
+their signatures and gain Pixiecore's. Kernels have to be UEFI images
+(Linux built with `CONFIG_EFI_STUB`); others are served unsigned.
+Kernels loaded by a custom `ipxe-script` aren't signed. The BIOS iPXE
+binaries aren't affected.
+
+Secure Boot only verifies iPXE and the kernel. The firmware doesn't
+check the boot script, initrds or kernel commandline, so use
+[HTTPS](#booting-over-https) to protect those in transit. Firmware
+doesn't check certificate expiry either, so anything the key signs
+boots on machines that trust it until the certificate is added to
+`dbx`. Guard the key accordingly.
+
+### Keeping the signing key in the TPM
+
+With `--secureboot-tpm`, the signing key is created in and never leaves
+the system TPM. As with the [TPM API client key](README.api.md#tpm-backed-client-certificates),
+this requires `--tpm-enabled`. The key is saved in
+`--secureboot-tpm-key` (default `/var/lib/pixiecore/secureboot.key`),
+and its certificate is read from `--secureboot-cert` (default
+`/var/lib/pixiecore/secureboot.crt`).
+
+`pixiecore secureboot-cert --tpm-enabled` creates the key and a
+self-signed certificate if they don't exist, and prints the
+certificate, which can be enrolled in `db` itself. To use a CA instead,
+print a certificate signing request, and save the signed certificate
+and any intermediates to `--secureboot-cert`:
+
+```shell
+sudo pixiecore secureboot-cert --tpm-enabled --common-name pxe01 --csr > pxe01.csr
+# Sign pxe01.csr with the CA in db, then:
+sudo cp pxe01-chain.pem /var/lib/pixiecore/secureboot.crt
+sudo pixiecore boot kernel initrd --tpm-enabled --secureboot-tpm
+```
+
+This is independent of the TPM API client certificate, which is only
+used with `--api-client-tpm`, so the Secure Boot key can be in the TPM
+while Pixiecore authenticates to the API server with
+`--api-client-cert`, or not at all.
 
 ## Running in containers
 

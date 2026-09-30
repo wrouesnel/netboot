@@ -1,5 +1,6 @@
-// Package tpmkey manages a TPM-resident client key and the X.509
-// certificate that goes with it, for use in mTLS authentication.
+// Package tpmkey manages TPM-resident keys and the X.509 certificates
+// that go with them, for use in mTLS authentication and for signing
+// UEFI Secure Boot images.
 //
 // The private key never leaves the TPM. It is stored on disk as a
 // TSS2 PEM keyfile ("-----BEGIN TSS2 PRIVATE KEY-----"), which is
@@ -10,7 +11,10 @@ package tpmkey // import "github.com/wrouesnel/netboot/pixiecore/tpmkey"
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -31,18 +35,61 @@ import (
 // ignored on Windows, where the TPM is always accessed through TBS.
 const DefaultDevice = "/dev/tpmrm0"
 
+// KeyType is the kind of key LoadOrCreateKey creates.
+type KeyType int
+
+const (
+	// KeyECDSAP256 is an ECDSA P-256 key, used for TLS client
+	// certificates.
+	KeyECDSAP256 KeyType = iota
+	// KeyRSA2048 is an RSA 2048-bit key, used to sign UEFI Secure Boot
+	// images. Firmware generally only verifies RSA 2048 signatures.
+	KeyRSA2048
+)
+
+func (k KeyType) String() string {
+	switch k {
+	case KeyECDSAP256:
+		return "ECDSA P-256"
+	case KeyRSA2048:
+		return "RSA 2048"
+	default:
+		return fmt.Sprintf("KeyType(%d)", int(k))
+	}
+}
+
+// matches reports whether pub is a key of type k.
+func (k KeyType) matches(pub crypto.PublicKey) bool {
+	switch pub := pub.(type) {
+	case *ecdsa.PublicKey:
+		return k == KeyECDSAP256 && pub.Curve == elliptic.P256()
+	case *rsa.PublicKey:
+		return k == KeyRSA2048 && pub.N.BitLen() == 2048
+	default:
+		return false
+	}
+}
+
 // LoadOrCreateKey reads the TSS2 keyfile at path, or creates a new
-// ECDSA P-256 signing key in the TPM and saves it to path if the file
-// does not exist.
+// signing key of type keyType in the TPM and saves it to path if the
+// file does not exist. It is an error for an existing key to be of a
+// different type. description is saved in new keyfiles.
 //
 // The key is created under the TPM's owner hierarchy, so ownerAuth
 // must be the owner hierarchy password (normally empty).
-func LoadOrCreateKey(tpm transport.TPMCloser, path string, ownerAuth []byte) (key *keyfile.TPMKey, created bool, err error) {
+func LoadOrCreateKey(tpm transport.TPMCloser, path string, ownerAuth []byte, keyType KeyType, description string) (key *keyfile.TPMKey, created bool, err error) {
 	bs, err := os.ReadFile(path)
 	if err == nil {
 		key, err := keyfile.Decode(bs)
 		if err != nil {
 			return nil, false, fmt.Errorf("parsing TPM keyfile %q: %w", path, err)
+		}
+		pub, err := key.PublicKey()
+		if err != nil {
+			return nil, false, fmt.Errorf("TPM keyfile %q: %w", path, err)
+		}
+		if !keyType.matches(pub) {
+			return nil, false, fmt.Errorf("TPM keyfile %q doesn't hold an %s key", path, keyType)
 		}
 		return key, false, nil
 	}
@@ -50,9 +97,17 @@ func LoadOrCreateKey(tpm transport.TPMCloser, path string, ownerAuth []byte) (ke
 		return nil, false, err
 	}
 
-	key, err = keyfile.NewLoadableKey(tpm, tpm2.TPMAlgECC, 256, ownerAuth,
+	alg, bits := tpm2.TPMAlgECC, 256
+	switch keyType {
+	case KeyECDSAP256:
+	case KeyRSA2048:
+		alg, bits = tpm2.TPMAlgRSA, 2048
+	default:
+		return nil, false, fmt.Errorf("unknown key type %s", keyType)
+	}
+	key, err = keyfile.NewLoadableKey(tpm, alg, bits, ownerAuth,
 		keyfile.WithUserAuth(nil),
-		keyfile.WithDescription("pixiecore API client key"),
+		keyfile.WithDescription(description),
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("creating TPM key: %w", err)
@@ -79,6 +134,9 @@ type CertificateOptions struct {
 	// Renew forces a new certificate to be issued even if a valid one
 	// already exists.
 	Renew bool
+	// ExtKeyUsage is the extended key usage of the certificate.
+	// Defaults to TLS client authentication.
+	ExtKeyUsage []x509.ExtKeyUsage
 }
 
 // LoadOrCreateCertificate returns the certificate stored at path if it
@@ -180,6 +238,10 @@ func selfSign(signer crypto.Signer, opts CertificateOptions) (*x509.Certificate,
 	if validity <= 0 {
 		validity = 10 * 365 * 24 * time.Hour
 	}
+	extKeyUsage := opts.ExtKeyUsage
+	if len(extKeyUsage) == 0 {
+		extKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	}
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		return nil, err
@@ -191,9 +253,9 @@ func selfSign(signer crypto.Signer, opts CertificateOptions) (*x509.Certificate,
 		NotBefore:    now.Add(-5 * time.Minute),
 		NotAfter:     now.Add(validity),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		// CA:FALSE. Servers trust the self-signed certificate
-		// directly, it must not be usable to issue other certificates.
+		ExtKeyUsage:  extKeyUsage,
+		// CA:FALSE. The self-signed certificate is trusted directly,
+		// it must not be usable to issue other certificates.
 		BasicConstraintsValid: true,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, signer.Public(), signer)

@@ -7,6 +7,7 @@ package tpmkey_test
 
 import (
 	"crypto"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -34,7 +35,7 @@ func TestTPMClientCertificate(t *testing.T) {
 	keyPath := filepath.Join(dir, "sub", "client.key")
 	certPath := filepath.Join(dir, "sub", "client.crt")
 
-	key, created, err := tpmkey.LoadOrCreateKey(tpm, keyPath, nil)
+	key, created, err := tpmkey.LoadOrCreateKey(tpm, keyPath, nil, tpmkey.KeyECDSAP256, "test key")
 	if err != nil || !created {
 		t.Fatalf("LoadOrCreateKey: created=%v err=%v", created, err)
 	}
@@ -48,7 +49,7 @@ func TestTPMClientCertificate(t *testing.T) {
 	}
 
 	// Loading the key again reads the file rather than making a new key.
-	key2, created, err := tpmkey.LoadOrCreateKey(tpm, keyPath, nil)
+	key2, created, err := tpmkey.LoadOrCreateKey(tpm, keyPath, nil, tpmkey.KeyECDSAP256, "test key")
 	if err != nil || created {
 		t.Fatalf("reloading key: created=%v err=%v", created, err)
 	}
@@ -143,5 +144,46 @@ func TestTPMClientCertificate(t *testing.T) {
 		if string(body) != "test-client" {
 			t.Fatalf("TLS %x: server saw client %q", version, body)
 		}
+	}
+}
+
+func TestTPMRSAKey(t *testing.T) {
+	tpm, err := simulator.OpenSimulator()
+	if err != nil {
+		t.Fatalf("opening TPM simulator: %s", err)
+	}
+	defer tpm.Close()
+
+	keyPath := filepath.Join(t.TempDir(), "secureboot.key")
+	key, created, err := tpmkey.LoadOrCreateKey(tpm, keyPath, nil, tpmkey.KeyRSA2048, "test key")
+	if err != nil || !created {
+		t.Fatalf("LoadOrCreateKey: created=%v err=%v", created, err)
+	}
+	pub, err := key.PublicKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rsaPub, ok := pub.(*rsa.PublicKey); !ok || rsaPub.N.BitLen() != 2048 {
+		t.Fatalf("key isn't RSA 2048: %T", pub)
+	}
+	if _, _, err := tpmkey.LoadOrCreateKey(tpm, keyPath, nil, tpmkey.KeyECDSAP256, "test key"); err == nil {
+		t.Fatal("loading an RSA key as ECDSA succeeded")
+	}
+
+	signer, err := tpmkey.Signer(tpm, key, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, _, err := tpmkey.LoadOrCreateCertificate(signer, filepath.Join(t.TempDir(), "secureboot.crt"), tpmkey.CertificateOptions{
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cert.ExtKeyUsage) != 1 || cert.ExtKeyUsage[0] != x509.ExtKeyUsageCodeSigning {
+		t.Fatalf("certificate EKU is %v, want code signing", cert.ExtKeyUsage)
+	}
+	if err := cert.CheckSignature(cert.SignatureAlgorithm, cert.RawTBSCertificate, cert.Signature); err != nil {
+		t.Fatalf("certificate isn't correctly self-signed by the TPM: %s", err)
 	}
 }
