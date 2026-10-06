@@ -212,3 +212,81 @@ func TestNew(t *testing.T) {
 		t.Error("New accepted an ECDSA key")
 	}
 }
+
+func TestCheckSigned(t *testing.T) {
+	key := rsaKey(t)
+	s, err := uefisign.New(key, []*x509.Certificate{newCert(t, "pixiecore", key, false, nil, nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := efiImage()
+	signed, err := s.Sign(image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := uefisign.CheckSigned(image, signed); err != nil {
+		t.Errorf("CheckSigned(signed image): %s", err)
+	}
+	// Signing a signed image adds a signature.
+	twice, err := s.Sign(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := uefisign.CheckSigned(signed, twice); err != nil {
+		t.Errorf("CheckSigned(signed twice): %s", err)
+	}
+
+	// A signer can replace the existing signatures.
+	if err := uefisign.CheckSigned(signed, other(t, s, image)); err != nil {
+		t.Errorf("CheckSigned(replaced signature): %s", err)
+	}
+
+	if err := uefisign.CheckSigned(image, image); err == nil {
+		t.Error("CheckSigned accepted an unsigned image")
+	}
+	if err := uefisign.CheckSigned(signed, signed); err == nil {
+		t.Error("CheckSigned accepted an image with no new signature")
+	}
+	// A different program, signed.
+	different, err := s.Sign(ipxe.MustAsset("third_party/ipxe/src/bin-i386-efi/ipxe.efi"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := uefisign.CheckSigned(image, different); err == nil {
+		t.Error("CheckSigned accepted a different program")
+	}
+	// The same program, changed after signing.
+	tampered := bytes.Clone(signed)
+	tampered[len(image)/2] ^= 0xff
+	if err := uefisign.CheckSigned(image, tampered); err == nil {
+		t.Error("CheckSigned accepted a changed program")
+	}
+	if err := uefisign.CheckSigned(image, []byte("not a PE")); err == nil {
+		t.Error("CheckSigned accepted a non-PE response")
+	}
+	if err := uefisign.CheckSigned([]byte("not a PE"), signed); !errors.Is(err, uefisign.ErrNotPE) {
+		t.Errorf("CheckSigned(non-PE original) = %v, want ErrNotPE", err)
+	}
+	if err := uefisign.IsPE(image); err != nil {
+		t.Errorf("IsPE(ipxe.efi): %s", err)
+	}
+	if err := uefisign.IsPE([]byte("not a PE")); !errors.Is(err, uefisign.ErrNotPE) {
+		t.Errorf("IsPE(non-PE) = %v, want ErrNotPE", err)
+	}
+}
+
+// other signs image with a new key, standing in for a signer that
+// replaces existing signatures.
+func other(t *testing.T, _ *uefisign.Signer, image []byte) []byte {
+	t.Helper()
+	key := rsaKey(t)
+	s, err := uefisign.New(key, []*x509.Certificate{newCert(t, "other", key, false, nil, nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := s.Sign(image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signed
+}

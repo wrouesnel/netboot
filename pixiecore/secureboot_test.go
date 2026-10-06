@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -116,10 +117,14 @@ func TestSignKernel(t *testing.T) {
 		t.Fatal("kernel from the boot script isn't signed")
 	}
 
-	// Other files aren't signed, even if asked for as a kernel.
+	// Other files aren't signed, even if asked for as a kernel, and
+	// kernels are only signed for the machine they're for.
+	mac, _ := net.ParseMAC("01:02:03:04:05:06")
 	for _, u := range []string{
 		"/_/file?name=kernel&type=kernel&mac=01:02:03:04:05:06",
-		"/_/file?name=other&type=kernel&mac=01:02:03:04:05:06&ksig=" + s.kernelToken("kernel"),
+		"/_/file?name=other&type=kernel&mac=01:02:03:04:05:06&ksig=" + s.kernelToken("kernel", mac),
+		"/_/file?name=kernel&type=kernel&mac=01:02:03:04:05:07&ksig=" + s.kernelToken("kernel", mac),
+		"/_/file?name=kernel&type=kernel&ksig=" + s.kernelToken("kernel", mac),
 		"/_/file?name=kernel",
 	} {
 		if !bytes.Equal(get(u), efi) {
@@ -129,7 +134,7 @@ func TestSignKernel(t *testing.T) {
 
 	// Kernels that aren't UEFI images are served unsigned.
 	for _, name := range []ID{"notefi", "notefiv2"} {
-		u := "/_/file?type=kernel&name=" + url.QueryEscape(string(name)) + "&ksig=" + s.kernelToken(name)
+		u := "/_/file?type=kernel&mac=01:02:03:04:05:06&name=" + url.QueryEscape(string(name)) + "&ksig=" + s.kernelToken(name, mac)
 		if got := get(u); !bytes.Equal(got, booter.files[name]) {
 			t.Errorf("GET %s: got %q", u, got)
 		}

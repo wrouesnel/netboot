@@ -309,10 +309,12 @@ API URL.
 TPM support is off by default. Pixiecore only reads, creates or uses
 the TPM key and certificate when `--tpm-enabled` is given, and the
 other `--tpm-*` flags are rejected without it. `--tpm-enabled` only
-allows TPM use: the client certificate is used with `--api-client-tpm`,
-and a TPM-held key for
-[Secure Boot signing](README.md#keeping-the-signing-key-in-the-tpm) with
-`--secureboot-tpm`. Either can be used without the other.
+allows TPM use. The client certificate is used for the API server with
+`--api-client-tpm`, and for a
+[Secure Boot signing service](README.md#delegating-signing-to-a-signing-service)
+with `--secureboot-delegate-client-tpm`. A TPM-held key for
+[Secure Boot signing](README.md#keeping-the-signing-key-in-the-tpm) is
+used with `--secureboot-tpm`. Each can be used without the others.
 
 With `--api-client-tpm`, Pixiecore uses a key generated inside the
 system TPM (`/dev/tpmrm0` by default, see `--tpm-device`), so the

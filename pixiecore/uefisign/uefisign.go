@@ -142,3 +142,52 @@ func Verify(image []byte, cert *x509.Certificate) (bool, error) {
 	}
 	return ok, err
 }
+
+// IsPE returns an error wrapping ErrNotPE if image isn't a PE/COFF
+// binary, so can't be signed.
+func IsPE(image []byte) error {
+	if _, err := authenticode.Parse(bytes.NewReader(image)); err != nil {
+		return fmt.Errorf("%w: %w", ErrNotPE, err)
+	}
+	return nil
+}
+
+// CheckSigned checks that signed is original with more signatures, or
+// a signature original doesn't have, as returned by a remote signer.
+// Original's signatures can be kept or replaced. The Authenticode digest covers everything
+// but the signatures, so a different program, or changes to original,
+// are rejected. It doesn't check who signed it.
+func CheckSigned(original, signed []byte) error {
+	orig, err := authenticode.Parse(bytes.NewReader(original))
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrNotPE, err)
+	}
+	pe, err := authenticode.Parse(bytes.NewReader(signed))
+	if err != nil {
+		return fmt.Errorf("signed image isn't a PE/COFF binary: %w", err)
+	}
+	if !bytes.Equal(orig.Hash(crypto.SHA256), pe.Hash(crypto.SHA256)) {
+		return errors.New("signed image isn't the image that was sent")
+	}
+	before, err := orig.Signatures()
+	if err != nil {
+		return fmt.Errorf("reading the image's signatures: %w", err)
+	}
+	after, err := pe.Signatures()
+	if err != nil {
+		return fmt.Errorf("reading the signed image's signatures: %w", err)
+	}
+	if len(after) > len(before) {
+		return nil
+	}
+	existing := map[string]bool{}
+	for _, sig := range before {
+		existing[string(sig.Certificate)] = true
+	}
+	for _, sig := range after {
+		if !existing[string(sig.Certificate)] {
+			return nil
+		}
+	}
+	return fmt.Errorf("signed image has no new signature (%d signatures, the image had %d)", len(after), len(before))
+}

@@ -79,6 +79,7 @@ func (s *Server) serveDHCP(conn *dhcp4.Conn) error {
 			s.log("DHCP", "Failed to send ProxyDHCP offer for %s: %s", pkt.HardwareAddr, err)
 			continue
 		}
+		s.prefetchIpxe(pkt.HardwareAddr, fwtype)
 	}
 }
 

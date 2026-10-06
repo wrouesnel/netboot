@@ -156,9 +156,10 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 	var body io.Reader = f
-	if s.SecureBootSigner != nil && r.URL.Query().Get("type") == "kernel" {
-		if hmac.Equal([]byte(r.URL.Query().Get("ksig")), []byte(s.kernelToken(ID(name)))) {
-			body, sz = s.signKernel(ID(name), f, sz)
+	if s.secureBootEnabled() && r.URL.Query().Get("type") == "kernel" {
+		mac, err := net.ParseMAC(r.URL.Query().Get("mac"))
+		if err == nil && hmac.Equal([]byte(r.URL.Query().Get("ksig")), []byte(s.kernelToken(ID(name), mac))) {
+			body, sz = s.signKernel(r.Context(), ID(name), mac, f, sz)
 		} else {
 			s.debug("HTTP", "Not signing kernel %q for %s, the request isn't from a boot script", name, r.RemoteAddr)
 		}
@@ -240,8 +241,8 @@ func (s *Server) ipxeScript(mach Machine, spec *Spec, baseURL string) ([]byte, e
 	var b bytes.Buffer
 	b.WriteString("#!ipxe\n")
 	u := fmt.Sprintf(urlTemplate, url.QueryEscape(string(spec.Kernel)), "kernel", url.QueryEscape(mach.MAC.String()))
-	if s.SecureBootSigner != nil {
-		u += "&ksig=" + s.kernelToken(spec.Kernel)
+	if s.secureBootEnabled() {
+		u += "&ksig=" + s.kernelToken(spec.Kernel, mach.MAC)
 	}
 	fmt.Fprintf(&b, "kernel --name kernel %s\n", u)
 	for i, initrd := range spec.Initrd {

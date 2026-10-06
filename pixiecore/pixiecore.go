@@ -214,6 +214,12 @@ type Server struct {
 	// in raw IpxeScripts aren't signed. The iPXE binaries in Ipxe must
 	// be signed separately.
 	SecureBootSigner *uefisign.Signer
+	// SecureBootDelegate, if set, signs the UEFI iPXE binaries and the
+	// kernels in boot specs for UEFI Secure Boot by sending them to a
+	// remote signing service, which signs them for the machine they're
+	// served to. Images that can't be signed are served unsigned. It
+	// can't be used with SecureBootSigner.
+	SecureBootDelegate *SecureBootDelegate
 
 	// Log receives logs on Pixiecore's operation. If nil, logging
 	// is suppressed.
@@ -267,6 +273,9 @@ func (s *Server) Serve() error {
 	}
 	if s.HTTPSPort == 0 {
 		s.HTTPSPort = portHTTPS
+	}
+	if s.SecureBootSigner != nil && s.SecureBootDelegate != nil {
+		return errors.New("SecureBootSigner and SecureBootDelegate can't both be set")
 	}
 	if s.DisableHTTP && s.TLSConfig == nil {
 		return errors.New("HTTP is disabled and HTTPS isn't enabled, one must be enabled to boot machines")

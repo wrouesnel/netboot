@@ -47,6 +47,10 @@ func apiClientFlags(cmd *cobra.Command) {
 // key.
 func tpmFlags(cmd *cobra.Command) {
 	tpmDeviceFlags(cmd)
+	if cmd.Flags().Lookup("tpm-key") != nil {
+		// Already added, by the API client or Secure Boot flags.
+		return
+	}
 	cmd.Flags().String("tpm-key", defaultTPMKey, "TSS2 keyfile for the TPM client key, created if it doesn't exist")
 	cmd.Flags().String("tpm-cert", defaultTPMCert, "Certificate for the TPM client key, created (self-signed) if it doesn't exist")
 }
@@ -307,14 +311,39 @@ func apiClientTPM(cmd *cobra.Command) (bool, error) {
 	if useTPM && !enabled {
 		return false, errors.New("--api-client-tpm requires --tpm-enabled")
 	}
-	if !useTPM {
-		for _, name := range []string{"tpm-key", "tpm-cert"} {
-			if cmd.Flags().Changed(name) {
-				return false, fmt.Errorf("--%s requires --api-client-tpm", name)
-			}
-		}
+	if err := checkTPMClientFlags(cmd); err != nil {
+		return false, err
 	}
 	return useTPM, nil
+}
+
+// tpmClientUsers are the flags that use the TPM client key and
+// certificate (--tpm-key, --tpm-cert).
+var tpmClientUsers = []string{"api-client-tpm", "secureboot-delegate-client-tpm"}
+
+// checkTPMClientFlags checks that --tpm-key and --tpm-cert are only
+// given when something uses them.
+func checkTPMClientFlags(cmd *cobra.Command) error {
+	var users []string
+	for _, name := range tpmClientUsers {
+		if cmd.Flags().Lookup(name) == nil {
+			continue
+		}
+		used, err := cmd.Flags().GetBool(name)
+		if err != nil {
+			return fmt.Errorf("error reading flag: %w", err)
+		}
+		if used {
+			return nil
+		}
+		users = append(users, "--"+name)
+	}
+	for _, name := range []string{"tpm-key", "tpm-cert"} {
+		if cmd.Flags().Changed(name) {
+			return fmt.Errorf("--%s requires %s", name, strings.Join(users, " or "))
+		}
+	}
+	return nil
 }
 
 // tpmOptionFlags are the flags that only make sense with --tpm-enabled.

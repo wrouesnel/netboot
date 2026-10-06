@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"sort"
 	"time"
@@ -27,7 +28,13 @@ func secureBootFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("secureboot-tpm", false, "Sign the UEFI iPXE binaries and kernels for UEFI Secure Boot with an RSA key in the TPM. Requires --tpm-enabled")
 	cmd.Flags().String("secureboot-tpm-key", defaultSecureBootTPMKey, "TSS2 keyfile for --secureboot-tpm, created if it doesn't exist")
 	cmd.Flags().String("secureboot-cert", defaultSecureBootCert, "PEM certificate for the Secure Boot signing key, followed by any intermediate certificates up to the certificate in the machines' db")
-	tpmDeviceFlags(cmd)
+	cmd.Flags().String("secureboot-delegate-url", "", "https:// URL of a signing service to sign the UEFI iPXE binaries and kernels for Secure Boot, for each machine, instead of signing them locally")
+	cmd.Flags().String("secureboot-delegate-ca-cert", "", "PEM file of CA certificates to trust for the signing service's certificate (default: system roots)")
+	cmd.Flags().String("secureboot-delegate-client-cert", "", "PEM certificate to present to the signing service for mTLS")
+	cmd.Flags().String("secureboot-delegate-client-key", "", "PEM private key for --secureboot-delegate-client-cert")
+	cmd.Flags().Bool("secureboot-delegate-client-tpm", false, "Present the TPM client certificate (--tpm-key, --tpm-cert) to the signing service for mTLS. Requires --tpm-enabled")
+	cmd.Flags().Duration("secureboot-delegate-timeout", 30*time.Second, "Timeout for each request to the signing service")
+	tpmFlags(cmd)
 }
 
 // secureBootFromFlags configures s to sign the kernels it serves, and
@@ -40,6 +47,28 @@ func secureBootFromFlags(cmd *cobra.Command, s *pixiecore.Server) {
 		fatalf("Error reading flag: %s", err)
 	}
 	certFile := mustGetString(cmd, "secureboot-cert")
+	if err := checkTPMClientFlags(cmd); err != nil {
+		fatalf("%s", err)
+	}
+
+	if delegateURL := mustGetString(cmd, "secureboot-delegate-url"); delegateURL != "" {
+		if keyFile != "" || useTPM {
+			fatalf("--secureboot-delegate-url can't be used with --secureboot-key or --secureboot-tpm")
+		}
+		for _, name := range []string{"secureboot-cert", "secureboot-tpm-key"} {
+			if cmd.Flags().Changed(name) {
+				fatalf("--%s is for local signing, and can't be used with --secureboot-delegate-url", name)
+			}
+		}
+		s.SecureBootDelegate = secureBootDelegateFromFlags(cmd, delegateURL)
+		fmt.Fprintf(os.Stderr, "Signing UEFI iPXE binaries and kernels for Secure Boot with %s\n", delegateURL)
+		return
+	}
+	for _, name := range secureBootDelegateFlags {
+		if cmd.Flags().Changed(name) {
+			fatalf("--%s requires --secureboot-delegate-url", name)
+		}
+	}
 
 	var signer crypto.Signer
 	var chain []*x509.Certificate
@@ -197,4 +226,70 @@ func init() {
 	secureBootCertCmd.Flags().Duration("validity", 30*365*24*time.Hour, "Validity period for a new certificate")
 	secureBootCertCmd.Flags().Bool("renew", false, "Issue a new self-signed certificate even if one exists")
 	secureBootCertCmd.Flags().Bool("csr", false, "Print a certificate signing request for the key instead of a certificate")
+}
+
+// secureBootDelegateFlags configure --secureboot-delegate-url.
+var secureBootDelegateFlags = []string{
+	"secureboot-delegate-ca-cert",
+	"secureboot-delegate-client-cert",
+	"secureboot-delegate-client-key",
+	"secureboot-delegate-client-tpm",
+	"secureboot-delegate-timeout",
+}
+
+// secureBootDelegateFromFlags returns the Secure Boot signing delegate
+// for delegateURL.
+func secureBootDelegateFromFlags(cmd *cobra.Command, delegateURL string) *pixiecore.SecureBootDelegate {
+	if u, err := url.Parse(delegateURL); err != nil || u.Scheme != "https" || u.Host == "" {
+		fatalf("--secureboot-delegate-url %q must be an https:// URL", delegateURL)
+	}
+	var cfg pixiecore.APIClientConfig
+	var err error
+	if cfg.Timeout, err = cmd.Flags().GetDuration("secureboot-delegate-timeout"); err != nil {
+		fatalf("Error reading flag: %s", err)
+	}
+	if cfg.Timeout <= 0 {
+		fatalf("--secureboot-delegate-timeout must be positive")
+	}
+	if caCert := mustGetString(cmd, "secureboot-delegate-ca-cert"); caCert != "" {
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(mustFile(caCert)) {
+			fatalf("No certificates found in --secureboot-delegate-ca-cert %q", caCert)
+		}
+		cfg.RootCAs = pool
+	}
+
+	clientCert := mustGetString(cmd, "secureboot-delegate-client-cert")
+	clientKey := mustGetString(cmd, "secureboot-delegate-client-key")
+	useTPM, err := cmd.Flags().GetBool("secureboot-delegate-client-tpm")
+	if err != nil {
+		fatalf("Error reading flag: %s", err)
+	}
+	enabled, err := tpmEnabled(cmd)
+	if err != nil {
+		fatalf("%s", err)
+	}
+	switch {
+	case useTPM && !enabled:
+		fatalf("--secureboot-delegate-client-tpm requires --tpm-enabled")
+	case useTPM && (clientCert != "" || clientKey != ""):
+		fatalf("--secureboot-delegate-client-tpm can't be used with --secureboot-delegate-client-cert/--secureboot-delegate-client-key")
+	case useTPM:
+		cfg.ClientCertificate = tpmCertificateFromFlags(cmd)
+	case clientCert != "" || clientKey != "":
+		if clientCert == "" || clientKey == "" {
+			fatalf("--secureboot-delegate-client-cert and --secureboot-delegate-client-key must be used together")
+		}
+		cert, err := tls.LoadX509KeyPair(clientCert, clientKey)
+		if err != nil {
+			fatalf("Couldn't load signing service client certificate: %s", err)
+		}
+		cfg.ClientCertificate = &cert
+	}
+
+	client, err := pixiecore.NewAPIClient(delegateURL, cfg)
+	if err != nil {
+		fatalf("Couldn't create signing service client: %s", err)
+	}
+	return &pixiecore.SecureBootDelegate{URL: delegateURL, Client: client}
 }

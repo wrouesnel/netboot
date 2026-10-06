@@ -12,10 +12,11 @@ import (
 
 var tpmCertCmd = &cobra.Command{
 	Use:   "tpm-cert",
-	Short: "Print the certificate for the TPM-backed API client key",
+	Short: "Print the certificate for the TPM-backed client key",
 	Long: `Print the certificate Pixiecore presents to API servers when run with
---api-client-tpm, so that the API server can be configured to trust it.
-This command also requires --tpm-enabled.
+--api-client-tpm, and to Secure Boot signing services when run with
+--secureboot-delegate-client-tpm, so that they can be configured to
+trust it. This command also requires --tpm-enabled.
 
 The private key is created inside the system TPM and never leaves it. It
 is stored in --tpm-key as a TSS2 keyfile, which is only usable with this

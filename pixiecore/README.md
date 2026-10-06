@@ -256,6 +256,65 @@ used with `--api-client-tpm`, so the Secure Boot key can be in the TPM
 while Pixiecore authenticates to the API server with
 `--api-client-cert`, or not at all.
 
+### Delegating signing to a signing service
+
+Instead of holding a signing key, Pixiecore can send each image to a
+remote signing service, which signs it for the machine it's for. For
+example, the service can sign only for machines it knows about, or
+with a different key for each group of machines. The service must use
+HTTPS, and Pixiecore can authenticate to it with a client certificate
+(mTLS):
+
+```shell
+sudo pixiecore api https://api.example/pixiecore \
+    --secureboot-delegate-url https://signer.example/sign \
+    --secureboot-delegate-ca-cert /etc/pixiecore/signer-ca.pem \
+    --secureboot-delegate-client-cert /etc/pixiecore/client.pem \
+    --secureboot-delegate-client-key /etc/pixiecore/client.key
+```
+
+- `--secureboot-delegate-ca-cert` holds the CA certificates to trust
+  for the service's certificate, instead of the system roots.
+- `--secureboot-delegate-client-cert` and
+  `--secureboot-delegate-client-key` are the client certificate. With
+  `--tpm-enabled --secureboot-delegate-client-tpm`, Pixiecore presents
+  its [TPM client certificate](README.api.md#tpm-backed-client-certificates)
+  instead, the same one `--api-client-tpm` uses.
+- `--secureboot-delegate-timeout` limits each request (30s by default).
+
+Delegated signing can't be used with `--secureboot-key` or
+`--secureboot-tpm`.
+
+For each machine, Pixiecore sends the UEFI iPXE binary when the machine
+fetches it over TFTP, and the kernel from the machine's boot spec when
+it's fetched. Pixiecore starts signing iPXE when it offers the machine a
+boot, so it's usually ready by the time the machine asks for it. Each
+image is sent as:
+
+```http
+POST /sign HTTP/1.1
+Host: signer.example
+Content-Type: application/octet-stream
+X-Pixiecore-Mac: 52:54:00:12:34:56
+X-Pixiecore-Image-Type: ipxe
+
+<the unsigned image>
+```
+
+`X-Pixiecore-Image-Type` is `ipxe` or `kernel`. The service responds
+`200` with the signed image as the body. It can add its signature to
+the ones the image already has, e.g. a Linux distribution's, or replace
+them (as `sbsign` does). Pixiecore checks that the response is the image
+it sent, with the same Authenticode digest and a new signature. Any
+other response, a different image, or a timeout makes Pixiecore serve
+the image unsigned, and log why. Machines with
+Secure Boot enabled then refuse to boot it. The service's error message
+is logged, so a `403` with a reason is a good way to refuse a machine.
+
+Images that aren't UEFI images, such as the BIOS iPXE binaries or
+kernels without an EFI stub, aren't sent. Signed images are cached for
+recent requests, so a machine retrying a download doesn't sign again.
+
 ## Running in containers
 
 Because Pixiecore needs to listen for DHCP traffic, it has to run with
