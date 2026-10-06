@@ -169,6 +169,12 @@ func TestSecureBootDelegateFlagErrors(t *testing.T) {
 		{[]string{"--secureboot-delegate-url", url, "--secureboot-delegate-timeout", "0s"}, "must be positive"},
 		{[]string{"--secureboot-delegate-url", url, "--secureboot-delegate-insecure", "--secureboot-delegate-ca-cert", cert}, "can't be used with --secureboot-delegate-ca-cert"},
 		{[]string{"--secureboot-delegate-insecure"}, "requires --secureboot-delegate-url"},
+		{[]string{"--secureboot-delegate-signing-id", "fleet-a"}, "requires --secureboot-delegate-url"},
+		{[]string{"--secureboot-delegate-header", "X-Site: syd1"}, "requires --secureboot-delegate-url"},
+		{[]string{"--secureboot-delegate-url", url, "--secureboot-delegate-signing-id", " "}, "must be non-empty"},
+		{[]string{"--secureboot-delegate-url", url, "--secureboot-delegate-signing-id", "a\tb\x01"}, "must be non-empty"},
+		{[]string{"--secureboot-delegate-url", url, "--secureboot-delegate-header", "X-Site"}, "--secureboot-delegate-header \"X-Site\" isn't of the form"},
+		{[]string{"--secureboot-delegate-url", url, "--secureboot-delegate-header", "X-Pixiecore-Signing-Id: x"}, "is set by Pixiecore"},
 		{[]string{"--secureboot-delegate-url", url, "--secureboot-delegate-ca-cert", key}, "No certificates found"},
 		{[]string{"--secureboot-delegate-url", url, "--tpm-key", filepath.Join(dir, "tpm.key")}, "--tpm-key requires --secureboot-delegate-client-tpm"},
 	}
@@ -202,7 +208,14 @@ func TestSecureBootDelegateRequest(t *testing.T) {
 		wantSent bool
 	}{
 		{name: "verified", args: nil},
-		{name: "insecure", args: []string{"--secureboot-delegate-insecure"}, wantSent: true},
+		{name: "insecure", args: []string{
+			"--secureboot-delegate-insecure",
+			"--secureboot-delegate-signing-id", " fleet-a ",
+			"--secureboot-delegate-header", "Authorization: Bearer abc",
+			"--secureboot-delegate-header", "X-Site: syd1",
+			// The request's own headers win.
+			"--secureboot-delegate-header", "Content-Type: text/plain",
+		}, wantSent: true},
 	} {
 		got = nil
 		cmd := &cobra.Command{}
@@ -229,6 +242,10 @@ func TestSecureBootDelegateRequest(t *testing.T) {
 			pixiecore.HeaderPixiecoreIP:        "127.0.0.1",
 			pixiecore.HeaderPixiecoreHostname:  hostname,
 			pixiecore.HeaderPixiecoreHTTPPort:  "8080",
+			pixiecore.HeaderPixiecoreSigningID: "fleet-a",
+			"Authorization":                    "Bearer abc",
+			"X-Site":                           "syd1",
+			"Content-Type":                     "application/octet-stream",
 		} {
 			if got.Get(name) != want {
 				t.Errorf("%s: %s is %q, want %q", tc.name, name, got.Get(name), want)

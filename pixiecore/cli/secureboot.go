@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -35,6 +36,8 @@ func secureBootFlags(cmd *cobra.Command) {
 	cmd.Flags().String("secureboot-delegate-client-key", "", "PEM private key for --secureboot-delegate-client-cert")
 	cmd.Flags().Bool("secureboot-delegate-client-tpm", false, "Present the TPM client certificate (--tpm-key, --tpm-cert) to the signing service for mTLS. Requires --tpm-enabled")
 	cmd.Flags().Duration("secureboot-delegate-timeout", 30*time.Second, "Timeout for each request to the signing service")
+	cmd.Flags().String("secureboot-delegate-signing-id", "", "Value of the "+pixiecore.HeaderPixiecoreSigningID+" header sent to the signing service, e.g. to choose a key or policy")
+	cmd.Flags().StringArray("secureboot-delegate-header", nil, "Extra header to send to the signing service, as \"Name: value\". Can be repeated")
 	tpmFlags(cmd)
 }
 
@@ -237,6 +240,8 @@ var secureBootDelegateFlags = []string{
 	"secureboot-delegate-client-key",
 	"secureboot-delegate-client-tpm",
 	"secureboot-delegate-timeout",
+	"secureboot-delegate-signing-id",
+	"secureboot-delegate-header",
 }
 
 // secureBootDelegateFromFlags returns the Secure Boot signing delegate
@@ -300,6 +305,16 @@ func secureBootDelegateFromFlags(cmd *cobra.Command, delegateURL string) *pixiec
 	// Pixiecores apart. --api-header values are only for the API
 	// server.
 	if cfg.Header, err = identityHeaders(cmd, delegateURL); err != nil {
+		fatalf("%s", err)
+	}
+	if cmd.Flags().Changed("secureboot-delegate-signing-id") {
+		id := strings.TrimSpace(mustGetString(cmd, "secureboot-delegate-signing-id"))
+		if id == "" || !validHeaderValue(id) {
+			fatalf("--secureboot-delegate-signing-id %q must be non-empty, without line breaks or control characters", id)
+		}
+		cfg.Header.Set(pixiecore.HeaderPixiecoreSigningID, id)
+	}
+	if err := customHeaders(cmd, "secureboot-delegate-header", cfg.Header); err != nil {
 		fatalf("%s", err)
 	}
 	if cfg.InsecureSkipVerify {

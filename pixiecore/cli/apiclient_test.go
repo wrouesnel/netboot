@@ -291,6 +291,7 @@ func TestCustomHeaders(t *testing.T) {
 		{args: []string{"--api-header", "X-Pixiecore-IP: 192.0.2.1"}, wantErr: true},
 		{args: []string{"--api-header", "x-pixiecore-proxy-port: 1"}, wantErr: true},
 		{args: []string{"--api-header", "Host: example"}, wantErr: true},
+		{args: []string{"--api-header", "X-Site: a\x01b"}, wantErr: true},
 	}
 	for _, tc := range cases {
 		cmd := &cobra.Command{}
@@ -299,7 +300,7 @@ func TestCustomHeaders(t *testing.T) {
 			t.Fatal(err)
 		}
 		h := http.Header{}
-		err := customHeaders(cmd, h)
+		err := customHeaders(cmd, "api-header", h)
 		if tc.wantErr {
 			if err == nil {
 				t.Errorf("customHeaders(%q) = %v, want error", tc.args, h)

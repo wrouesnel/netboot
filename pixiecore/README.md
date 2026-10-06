@@ -284,6 +284,13 @@ sudo pixiecore api https://api.example/pixiecore \
   its [TPM client certificate](README.api.md#tpm-backed-client-certificates)
   instead, the same one `--api-client-tpm` uses.
 - `--secureboot-delegate-timeout` limits each request (30s by default).
+- `--secureboot-delegate-signing-id fleet-a` sends
+  `X-Pixiecore-Signing-Id: fleet-a`, for example to tell the service
+  which key or policy to sign with.
+- `--secureboot-delegate-header "Name: value"`, which can be repeated,
+  sends other fixed headers, such as `Authorization: Bearer <token>`.
+  As with `--api-header`, `X-Pixiecore-` names are reserved, and these
+  headers are only sent to the signing service.
 
 Delegated signing can't be used with `--secureboot-key` or
 `--secureboot-tpm`.

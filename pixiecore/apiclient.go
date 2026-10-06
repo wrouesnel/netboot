@@ -28,6 +28,9 @@ const (
 	// Pixiecore's DNS forwarder, if it runs one (see
 	// Server.DNSForwarder).
 	HeaderPixiecoreDNS = "X-Pixiecore-Dns"
+	// HeaderPixiecoreSigningID is sent to a SecureBootDelegate, if
+	// configured, e.g. to choose a signing key or policy.
+	HeaderPixiecoreSigningID = "X-Pixiecore-Signing-Id"
 )
 
 // APIClientConfig configures the HTTP client used to talk to a
@@ -55,7 +58,8 @@ type APIClientConfig struct {
 
 	// Header holds extra headers to send with every request to the API
 	// server, such as HeaderPixiecoreIP. Like basic auth credentials,
-	// they are only sent to the API server itself.
+	// they are only sent to the API server itself. Headers a request
+	// sets itself take precedence.
 	Header http.Header
 }
 
@@ -115,8 +119,12 @@ func (b *apiOriginTransport) RoundTrip(req *http.Request) (*http.Response, error
 		return b.next.RoundTrip(req)
 	}
 	req = req.Clone(req.Context())
+	// Headers the request sets itself, such as a signing request's
+	// Content-Type, win over the fixed ones.
 	for k, v := range b.header {
-		req.Header[k] = v
+		if _, ok := req.Header[k]; !ok {
+			req.Header[k] = v
+		}
 	}
 	if b.username != "" && req.Header.Get("Authorization") == "" {
 		req.SetBasicAuth(b.username, b.password)

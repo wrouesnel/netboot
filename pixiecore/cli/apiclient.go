@@ -127,7 +127,7 @@ func apiClientFromFlags(cmd *cobra.Command, apiURL string) *http.Client {
 	if cfg.Header, err = identityHeaders(cmd, apiURL); err != nil {
 		fatalf("%s", err)
 	}
-	if err := customHeaders(cmd, cfg.Header); err != nil {
+	if err := customHeaders(cmd, "api-header", cfg.Header); err != nil {
 		fatalf("%s", err)
 	}
 	if cfg.Username != "" && cfg.Header.Get("Authorization") != "" {
@@ -242,28 +242,40 @@ func pixiecoreIP(cmd *cobra.Command, apiURL string) (net.IP, error) {
 	return ip, nil
 }
 
-// customHeaders adds the --api-header headers to h.
-func customHeaders(cmd *cobra.Command, h http.Header) error {
-	headers, err := cmd.Flags().GetStringArray("api-header")
+// customHeaders adds the headers given in flag, a string array of
+// "Name: value" headers such as --api-header, to h.
+func customHeaders(cmd *cobra.Command, flag string, h http.Header) error {
+	headers, err := cmd.Flags().GetStringArray(flag)
 	if err != nil {
 		return fmt.Errorf("error reading flag: %w", err)
 	}
 	for _, header := range headers {
 		name, value, ok := strings.Cut(header, ":")
 		if !ok || !validHeaderName(name) {
-			return fmt.Errorf("--api-header %q isn't of the form \"Name: value\"", header)
+			return fmt.Errorf("--%s %q isn't of the form \"Name: value\"", flag, header)
 		}
 		value = strings.TrimSpace(value)
-		if strings.ContainsAny(value, "\r\n\x00") {
-			return fmt.Errorf("--api-header %q: the value can't contain line breaks", header)
+		if !validHeaderValue(value) {
+			return fmt.Errorf("--%s %q: the value can't contain line breaks or control characters", flag, header)
 		}
 		name = http.CanonicalHeaderKey(name)
 		if strings.HasPrefix(name, "X-Pixiecore-") || name == "Host" {
-			return fmt.Errorf("--api-header %q: %s is set by Pixiecore", header, name)
+			return fmt.Errorf("--%s %q: %s is set by Pixiecore", flag, header, name)
 		}
 		h.Add(name, value)
 	}
 	return nil
+}
+
+// validHeaderValue reports whether value can be sent as an HTTP header
+// value: no control characters other than tab.
+func validHeaderValue(value string) bool {
+	for _, c := range []byte(value) {
+		if (c < 0x20 && c != '\t') || c == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 // validHeaderName reports whether name is an HTTP token (RFC 9110).
