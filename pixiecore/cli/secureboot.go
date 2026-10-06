@@ -30,6 +30,7 @@ func secureBootFlags(cmd *cobra.Command) {
 	cmd.Flags().String("secureboot-cert", defaultSecureBootCert, "PEM certificate for the Secure Boot signing key, followed by any intermediate certificates up to the certificate in the machines' db")
 	cmd.Flags().String("secureboot-delegate-url", "", "https:// URL of a signing service to sign the UEFI iPXE binaries and kernels for Secure Boot, for each machine, instead of signing them locally")
 	cmd.Flags().String("secureboot-delegate-ca-cert", "", "PEM file of CA certificates to trust for the signing service's certificate (default: system roots)")
+	cmd.Flags().Bool("secureboot-delegate-insecure", false, "Don't verify the signing service's TLS certificate. Insecure, for testing only")
 	cmd.Flags().String("secureboot-delegate-client-cert", "", "PEM certificate to present to the signing service for mTLS")
 	cmd.Flags().String("secureboot-delegate-client-key", "", "PEM private key for --secureboot-delegate-client-cert")
 	cmd.Flags().Bool("secureboot-delegate-client-tpm", false, "Present the TPM client certificate (--tpm-key, --tpm-cert) to the signing service for mTLS. Requires --tpm-enabled")
@@ -231,6 +232,7 @@ func init() {
 // secureBootDelegateFlags configure --secureboot-delegate-url.
 var secureBootDelegateFlags = []string{
 	"secureboot-delegate-ca-cert",
+	"secureboot-delegate-insecure",
 	"secureboot-delegate-client-cert",
 	"secureboot-delegate-client-key",
 	"secureboot-delegate-client-tpm",
@@ -251,7 +253,14 @@ func secureBootDelegateFromFlags(cmd *cobra.Command, delegateURL string) *pixiec
 	if cfg.Timeout <= 0 {
 		fatalf("--secureboot-delegate-timeout must be positive")
 	}
-	if caCert := mustGetString(cmd, "secureboot-delegate-ca-cert"); caCert != "" {
+	if cfg.InsecureSkipVerify, err = cmd.Flags().GetBool("secureboot-delegate-insecure"); err != nil {
+		fatalf("Error reading flag: %s", err)
+	}
+	caCert := mustGetString(cmd, "secureboot-delegate-ca-cert")
+	if cfg.InsecureSkipVerify && caCert != "" {
+		fatalf("--secureboot-delegate-insecure can't be used with --secureboot-delegate-ca-cert")
+	}
+	if caCert != "" {
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(mustFile(caCert)) {
 			fatalf("No certificates found in --secureboot-delegate-ca-cert %q", caCert)
@@ -285,6 +294,16 @@ func secureBootDelegateFromFlags(cmd *cobra.Command, delegateURL string) *pixiec
 			fatalf("Couldn't load signing service client certificate: %s", err)
 		}
 		cfg.ClientCertificate = &cert
+	}
+
+	// The same headers the API server gets, so a service can tell
+	// Pixiecores apart. --api-header values are only for the API
+	// server.
+	if cfg.Header, err = identityHeaders(cmd, delegateURL); err != nil {
+		fatalf("%s", err)
+	}
+	if cfg.InsecureSkipVerify {
+		fmt.Fprintf(os.Stderr, "WARNING: --secureboot-delegate-insecure is set, the signing service's TLS certificate is not verified\n")
 	}
 
 	client, err := pixiecore.NewAPIClient(delegateURL, cfg)

@@ -156,7 +156,9 @@ func identityHeaders(cmd *cobra.Command, apiURL string) (http.Header, error) {
 	if err != nil {
 		return nil, err
 	}
-	hostname := mustGetString(cmd, "api-pixiecore-hostname")
+	// Commands without API flags (e.g. boot, for a Secure Boot signing
+	// service) use the defaults.
+	hostname := optionalString(cmd, "api-pixiecore-hostname")
 
 	if hostname == "" {
 		var err error
@@ -215,7 +217,7 @@ func identityHeaders(cmd *cobra.Command, apiURL string) (http.Header, error) {
 // server: --api-pixiecore-ip, else --listen-addr if it's a specific
 // address, else the local address used to reach apiURL.
 func pixiecoreIP(cmd *cobra.Command, apiURL string) (net.IP, error) {
-	if s := mustGetString(cmd, "api-pixiecore-ip"); s != "" {
+	if s := optionalString(cmd, "api-pixiecore-ip"); s != "" {
 		ip := net.ParseIP(s)
 		if ip == nil {
 			return nil, fmt.Errorf("--api-pixiecore-ip %q is not an IP address", s)
@@ -231,7 +233,11 @@ func pixiecoreIP(cmd *cobra.Command, apiURL string) (net.IP, error) {
 	}
 	ip, err := pixiecore.DetectLocalIP(apiURL)
 	if err != nil {
-		return nil, fmt.Errorf("couldn't detect the local IP address for the API server, set --api-pixiecore-ip: %w", err)
+		hint := "set --listen-addr to a specific address"
+		if cmd.Flags().Lookup("api-pixiecore-ip") != nil {
+			hint = "set --api-pixiecore-ip"
+		}
+		return nil, fmt.Errorf("couldn't detect the local IP address used to reach %s, %s: %w", apiURL, hint, err)
 	}
 	return ip, nil
 }
@@ -365,6 +371,15 @@ func tpmEnabled(cmd *cobra.Command) (bool, error) {
 		}
 	}
 	return enabled, nil
+}
+
+// optionalString returns the value of flag name, or "" if cmd doesn't
+// have it.
+func optionalString(cmd *cobra.Command, name string) string {
+	if cmd.Flags().Lookup(name) == nil {
+		return ""
+	}
+	return mustGetString(cmd, name)
 }
 
 func mustGetString(cmd *cobra.Command, name string) string {

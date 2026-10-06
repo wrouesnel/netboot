@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -8,6 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"math/big"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -102,7 +106,7 @@ func TestSecureBootDelegateFromFlags(t *testing.T) {
 	cmd := &cobra.Command{}
 	serverConfigFlags(cmd)
 	if err := cmd.ParseFlags([]string{
-		"--secureboot-delegate-url", "https://signer.example/sign",
+		"--secureboot-delegate-url", "https://127.0.0.1:8443/sign",
 		"--secureboot-delegate-ca-cert", filepath.Join(dir, "ca.crt"),
 		"--secureboot-delegate-client-cert", filepath.Join(dir, "server.crt"),
 		"--secureboot-delegate-client-key", filepath.Join(dir, "server.key"),
@@ -116,7 +120,7 @@ func TestSecureBootDelegateFromFlags(t *testing.T) {
 	if s.SecureBootSigner != nil || s.SecureBootDelegate == nil {
 		t.Fatalf("got signer %v, delegate %v; want only a delegate", s.SecureBootSigner, s.SecureBootDelegate)
 	}
-	if s.SecureBootDelegate.URL != "https://signer.example/sign" || s.SecureBootDelegate.Client.Timeout != 5*time.Second {
+	if s.SecureBootDelegate.URL != "https://127.0.0.1:8443/sign" || s.SecureBootDelegate.Client.Timeout != 5*time.Second {
 		t.Errorf("delegate has URL %q, timeout %s", s.SecureBootDelegate.URL, s.SecureBootDelegate.Client.Timeout)
 	}
 	// The iPXE binaries are signed per machine when they're served.
@@ -147,7 +151,7 @@ func TestSecureBootDelegateFlagErrors(t *testing.T) {
 	dir := t.TempDir()
 	testServerChain(t, dir)
 	cert, key := filepath.Join(dir, "server.crt"), filepath.Join(dir, "server.key")
-	url := "https://signer.example/sign"
+	url := "https://127.0.0.1:8443/sign"
 	cases := []struct {
 		args []string
 		want string
@@ -163,6 +167,8 @@ func TestSecureBootDelegateFlagErrors(t *testing.T) {
 		{[]string{"--secureboot-delegate-url", url, "--secureboot-delegate-client-tpm"}, "requires --tpm-enabled"},
 		{[]string{"--secureboot-delegate-url", url, "--tpm-enabled", "--secureboot-delegate-client-tpm", "--secureboot-delegate-client-cert", cert, "--secureboot-delegate-client-key", key}, "can't be used with --secureboot-delegate-client-cert"},
 		{[]string{"--secureboot-delegate-url", url, "--secureboot-delegate-timeout", "0s"}, "must be positive"},
+		{[]string{"--secureboot-delegate-url", url, "--secureboot-delegate-insecure", "--secureboot-delegate-ca-cert", cert}, "can't be used with --secureboot-delegate-ca-cert"},
+		{[]string{"--secureboot-delegate-insecure"}, "requires --secureboot-delegate-url"},
 		{[]string{"--secureboot-delegate-url", url, "--secureboot-delegate-ca-cert", key}, "No certificates found"},
 		{[]string{"--secureboot-delegate-url", url, "--tpm-key", filepath.Join(dir, "tpm.key")}, "--tpm-key requires --secureboot-delegate-client-tpm"},
 	}
@@ -174,6 +180,59 @@ func TestSecureBootDelegateFlagErrors(t *testing.T) {
 		var exit *exec.ExitError
 		if !errors.As(err, &exit) || exit.ExitCode() != 1 || !strings.Contains(string(out), tc.want) {
 			t.Errorf("%q: got %v, output %q; want exit 1 with %q", tc.args, err, out, tc.want)
+		}
+	}
+}
+
+func TestSecureBootDelegateRequest(t *testing.T) {
+	// A signing service with a certificate Pixiecore doesn't trust,
+	// which records what it's sent.
+	var got http.Header
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		http.Error(w, "not signing", http.StatusForbidden)
+	}))
+	defer srv.Close()
+	image := builtinIpxe()[pixiecore.FirmwareEFI64]
+	mac, _ := net.ParseMAC("52:54:00:12:34:56")
+
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		wantSent bool
+	}{
+		{name: "verified", args: nil},
+		{name: "insecure", args: []string{"--secureboot-delegate-insecure"}, wantSent: true},
+	} {
+		got = nil
+		cmd := &cobra.Command{}
+		serverConfigFlags(cmd)
+		if err := cmd.ParseFlags(append([]string{"--secureboot-delegate-url", srv.URL + "/sign", "--port", "8080"}, tc.args...)); err != nil {
+			t.Fatal(err)
+		}
+		s := &pixiecore.Server{}
+		secureBootFromFlags(cmd, s)
+		_, err := s.SecureBootDelegate.Sign(context.Background(), mac, pixiecore.ImageIpxe, image)
+		if !tc.wantSent {
+			if err == nil || got != nil {
+				t.Errorf("%s: sent to a service with an untrusted certificate (err %v)", tc.name, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), "not signing") {
+			t.Errorf("%s: got %v, want the service's error", tc.name, err)
+		}
+		hostname, _ := os.Hostname()
+		for name, want := range map[string]string{
+			pixiecore.HeaderPixiecoreMAC:       "52:54:00:12:34:56",
+			pixiecore.HeaderPixiecoreImageType: "ipxe",
+			pixiecore.HeaderPixiecoreIP:        "127.0.0.1",
+			pixiecore.HeaderPixiecoreHostname:  hostname,
+			pixiecore.HeaderPixiecoreHTTPPort:  "8080",
+		} {
+			if got.Get(name) != want {
+				t.Errorf("%s: %s is %q, want %q", tc.name, name, got.Get(name), want)
+			}
 		}
 	}
 }

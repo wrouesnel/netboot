@@ -275,6 +275,9 @@ sudo pixiecore api https://api.example/pixiecore \
 
 - `--secureboot-delegate-ca-cert` holds the CA certificates to trust
   for the service's certificate, instead of the system roots.
+- `--secureboot-delegate-insecure` turns off verification of the
+  service's certificate, for testing. Anyone on the network path can
+  then pose as the service and sign whatever they like.
 - `--secureboot-delegate-client-cert` and
   `--secureboot-delegate-client-key` are the client certificate. With
   `--tpm-enabled --secureboot-delegate-client-tpm`, Pixiecore presents
@@ -301,7 +304,11 @@ X-Pixiecore-Image-Type: ipxe
 <the unsigned image>
 ```
 
-`X-Pixiecore-Image-Type` is `ipxe` or `kernel`. The service responds
+`X-Pixiecore-Image-Type` is `ipxe` or `kernel`. Requests also carry
+the headers that identify Pixiecore to the API server, such as
+`X-Pixiecore-IP` and `X-Pixiecore-Hostname` (see the
+[API headers](README.api.md#api-specification)). `--api-header`
+headers are only sent to the API server. The service responds
 `200` with the signed image as the body. It can add its signature to
 the ones the image already has, e.g. a Linux distribution's, or replace
 them (as `sbsign` does). Pixiecore checks that the response is the image
